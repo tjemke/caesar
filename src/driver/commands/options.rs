@@ -201,6 +201,9 @@ pub struct OptimizationOptions {
     #[arg(long)]
     pub no_boolify: bool,
 
+    #[arg(long)]
+    pub no_passify: bool,
+
     /// Don't apply Z3's simplification pass. This may help with interpreting
     /// the current solver state.
     #[arg(long)]

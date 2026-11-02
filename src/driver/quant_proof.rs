@@ -33,6 +33,10 @@ pub fn lower_quant_prove_task(
     // 1. Unfolding (applies substitutions)
     quant_task.unfold(options, limits_ref, tcx)?;
 
+    if options.opt_options.no_passify {
+        quant_task.passify();
+    }
+
     // 2. Quantifier elimination
     if !options.opt_options.no_qelim {
         quant_task.qelim(tcx, limits_ref)?;
@@ -109,6 +113,10 @@ impl QuantVcProveTask {
         // Apply/eliminate substitutions again
         apply_subst(tcx, &mut self.expr, limits_ref)?;
         Ok(())
+    }
+
+    pub fn passify(&mut self) -> Result<(), CaesarError> {
+        todo!()
     }
 
     /// Trace some statistics about this vc expression.
