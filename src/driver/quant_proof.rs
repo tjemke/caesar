@@ -12,7 +12,8 @@ use crate::{
     depgraph::Dependencies,
     driver::{commands::verify::VerifyCommand, error::CaesarError, item::SourceUnitName},
     opt::{
-        boolify::Boolify, qelim::Qelim, relational::Relational, unfolder::Unfolder, RemoveParens,
+        boolify::Boolify, qelim::Qelim, relational::Relational,
+        unfolder::Unfolder, RemoveParens,
     },
     resource_limits::{LimitError, LimitsRef},
     smt::{funcs::axiomatic::AxiomaticFunctionEncoder, DepConfig, SmtCtx},
@@ -32,10 +33,6 @@ pub fn lower_quant_prove_task(
 ) -> Result<BoolVcProveTask, CaesarError> {
     // 1. Unfolding (applies substitutions)
     quant_task.unfold(options, limits_ref, tcx)?;
-
-    if options.opt_options.no_passify {
-        quant_task.passify();
-    }
 
     // 2. Quantifier elimination
     if !options.opt_options.no_qelim {
@@ -113,10 +110,6 @@ impl QuantVcProveTask {
         // Apply/eliminate substitutions again
         apply_subst(tcx, &mut self.expr, limits_ref)?;
         Ok(())
-    }
-
-    pub fn passify(&mut self) -> Result<(), CaesarError> {
-        todo!()
     }
 
     /// Trace some statistics about this vc expression.

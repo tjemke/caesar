@@ -222,6 +222,7 @@ pub enum SpanVariant {
     ProcVerify,
     SpecCall,
     Encoding,
+    Passify,
     Qelim,
     Boolify,
     Subst,
@@ -334,6 +335,7 @@ impl fmt::Debug for Span {
             SpanVariant::Boolify => "boolify/",
             SpanVariant::Subst => "subst/",
             SpanVariant::Slicing => "slicing/",
+            SpanVariant::Passify => "passify",
         };
         f.write_fmt(format_args!("{}{}-{}", prefix, self.start, self.end))
     }
