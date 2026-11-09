@@ -112,8 +112,9 @@ impl<'a> VisitorMut for Subst<'a> {
         let span = e.span;
         match &mut e.deref_mut().kind {
             ExprKind::Var(ident) => {
-                if let Some(subst) = self.lookup_var(*ident) {
-                    *e = subst.clone()
+                match self.lookup_var(*ident) {
+                    Some(subst) => *e = subst.clone(),
+                    None => (), // self.push_quant(span, &[ident], self.tcx),
                 }
                 Ok(())
             }

@@ -6,7 +6,7 @@
 //! verification condition generation ([`crate::vc`]) where expressions with
 //! possibly exponential size in the input program are generated. Since the
 //! generated verification conditions use shared references to sub-expressions,
-//! we can reasily represent gigantic expressions with small memory usage.
+//! we can easily represent gigantic expressions with small memory usage.
 //!
 //! But for later operations on the verification conditions such as quantifier
 //! elimination or the final SAT check using Z3, we need to visit the complete
