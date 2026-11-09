@@ -1,7 +1,14 @@
 use crate::{
     ast::{
-        Block, Expr, ExprData, ExprKind, Ident, Spanned, VarKind, diagnostic::{Span, SpanVariant}, stmt::{Direction, Stmt, StmtKind}, visit::{VisitorMut, walk_stmt},
-    }, tyctx::TyCtx, vc::subst::Subst,
+        diagnostic::{Span, SpanVariant},
+        stmt::{Direction, Stmt, StmtKind},
+        visit::{walk_stmt, VisitorMut},
+        BinOpKind, Block, Expr, ExprBuilder, ExprData, ExprKind, Ident, Spanned, TyKind, UnOpKind,
+        VarKind,
+    },
+    proof_rules::ident_to_expr, // TODO: this needs to be moved somewhere, spec_call already has a copy
+    tyctx::TyCtx,
+    vc::subst::Subst,
 };
 
 pub struct Passify<'tcx> {
@@ -14,20 +21,24 @@ impl<'tcx> Passify<'tcx> {
         Passify { tcx, direction }
     }
 
-    pub fn encode_assign(&mut self, span: Span, idents: &[Ident], expr: &Expr) -> Option<Block> {
+    pub fn encode_assign(&mut self, span: Span, ident: Ident, expr: &Expr) -> Option<Block> {
         let span = span.variant(SpanVariant::Passify);
-        let mut sequence_buffer: Vec<Spanned<StmtKind>> = Vec::new();
+        let expr_builder = ExprBuilder::new(span);
 
-        let fresh_idents: Vec<Ident> = idents
-            .iter()
-            .map(|i| self.tcx.clone_var(*i, span, VarKind::Subst))
-            .collect();
-        sequence_buffer.append(&mut vec![
-            Spanned::new(span, StmtKind::Havoc(self.direction, fresh_idents)),
-            Spanned::new(span, StmtKind::Assume(self.direction, Shared::new())),
-        ]);
-        Expr::new(ExprData{kind: ExprKind::Subst((), (), ())})
-        Some(Block::new(span, sequence_buffer))
+        let passified_ident = self.tcx.clone_var(ident, span, VarKind::Subst);
+        let passified_equals_expr = expr_builder.binary(
+            BinOpKind::Eq,
+            Some(TyKind::Bool),
+            ident_to_expr(self.tcx, span, passified_ident),
+            expr.clone(), // TODO this needs to have the subst applied to it
+        );
+        let embedded_passified_equals_expr =
+            expr_builder.unary(UnOpKind::Embed, Some(TyKind::Bool), passified_equals_expr);
+
+        Some(Block::new(span, vec![
+            Spanned::new(span, StmtKind::Havoc(self.direction, vec![passified_ident])),
+            Spanned::new(span, StmtKind::Assume(self.direction, embedded_passified_equals_expr)),
+        ]))
     }
 }
 
@@ -38,7 +49,10 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
         walk_stmt(self, s)?;
         match &mut s.node {
             StmtKind::Assign(idents, expr) => {
-                self.encode_assign(s.span, idents, expr);
+                let [ident] = idents.as_slice() else {
+                    unreachable!("SpecCall desugaring should have removed all tuple lhses");
+                };
+                self.encode_assign(s.span, *ident, expr);
             }
             // StmtKind::Demonic
             _ => {}
