@@ -19,6 +19,7 @@ use crate::{
         item::SourceUnitName,
         quant_proof::QuantVcProveTask,
     },
+    opt::passify::Passify,
     pretty::{Doc, SimplePretty},
     procs::{
         proc_verify::{encode_proc_verify, to_direction_lower_bounds},
@@ -50,6 +51,8 @@ pub fn lower_core_verify_task(
 ) -> Result<(QuantVcProveTask, SliceStmts), CaesarError> {
     // 1. Desugaring
     task.desugar_spec_calls(tcx, name.to_string())?;
+
+    let _ = task.passify(tcx);
 
     // 2. Preparing slicing
     let slice_stmts = task.prepare_slicing(&options.slice_options, tcx, server)?;
@@ -123,6 +126,15 @@ impl CoreVerifyTask {
         let res = spec_call.visit_block(&mut self.block);
 
         Ok(res.map_err(|ann_err| ann_err.diagnostic())?)
+    }
+
+    #[instrument(skip_all)]
+    pub fn passify(&mut self, tcx: &mut TyCtx) -> Result<(), ()> {
+        // Passify gets the direction so that we can apply the transformation according to the proc direction
+        let mut pass = Passify::new(tcx, self.direction);
+        let _ = pass.visit_block(&mut self.block);
+
+        Ok(())
     }
 
     /// Prepare the code for slicing.

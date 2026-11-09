@@ -20,6 +20,7 @@ pub mod boolify;
 pub mod constfold;
 #[cfg(test)]
 mod fuzz_test;
+pub mod passify;
 pub mod qelim;
 pub mod relational;
 pub mod unfolder;
