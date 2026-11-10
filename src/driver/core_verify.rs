@@ -132,7 +132,7 @@ impl CoreVerifyTask {
     pub fn passify(&mut self, tcx: &mut TyCtx) -> Result<(), ()> {
         // Passify gets the direction so that we can apply the transformation according to the proc direction
         let mut pass = Passify::new(tcx, self.direction);
-        let _ = pass.visit_block(&mut self.block);
+        let _ = pass.visit_block(&mut self.block)?;
 
         Ok(())
     }
