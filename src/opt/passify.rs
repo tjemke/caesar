@@ -1,27 +1,55 @@
+use std::collections::HashMap;
+
+use itertools::Itertools;
+
 use crate::{
     ast::{
-        diagnostic::{Span, SpanVariant},
-        stmt::{Direction, Stmt, StmtKind},
-        visit::{walk_stmt, VisitorMut},
-        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprKind, Ident, Spanned, TyKind, UnOpKind,
-        VarKind,
-    },
-    proof_rules::ident_to_expr,
-    tyctx::TyCtx,
+        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprKind, Ident, Spanned, TyKind, UnOpKind::{self, Non}, VarKind, diagnostic::{Span, SpanVariant}, stmt::{Direction, Stmt, StmtKind}, visit::{VisitorMut, walk_stmt},
+    }, proof_rules::ident_to_expr, tyctx::TyCtx,
 };
+#[derive(Debug)]
+pub enum PassifyError {
+    DirectionMismatch,
+}
 
+#[derive(Clone)]
 pub struct Passify<'tcx> {
-    tcx: &'tcx mut TyCtx,
+    tcx: &'tcx TyCtx,
     direction: Direction,
+    substitutions: HashMap<Ident, Ident>,
 }
 
 impl<'tcx> Passify<'tcx> {
-    pub fn new(tcx: &'tcx mut TyCtx, direction: Direction) -> Self {
-        Passify { tcx, direction }
+    pub fn new(tcx: &'tcx TyCtx, direction: Direction) -> Self {
+        let substitutions = HashMap::new();
+        Passify {
+            tcx,
+            direction,
+            substitutions,
+        }
+    }
+
+    fn passify_identifier(&mut self, ident: Ident, span: Span) -> Ident {
+        if let Some(passified) = self.substitutions.get(&ident) {
+            return *passified;
+        }
+        let passified = self.tcx.clone_var(ident, span, VarKind::Subst);
+        self.substitutions.insert(ident, passified);
+        passified
+    }
+
+    fn substitute_in_expr(&self, expr: Expr, span: Span) -> Expr {
+        let builder = ExprBuilder::new(span);
+        builder.subst(
+            expr,
+            self.substitutions
+                .iter()
+                .map(|(k, v)| (*k, ident_to_expr(self.tcx, span, *v))),
+        )
     }
 
     // Builds a passified version of the assignment if possible.
-    pub fn encode_assign(&mut self, span: Span, ident: Ident, expr: &Expr) -> Option<Block> {
+    fn encode_assign(&mut self, span: Span, ident: Ident, expr: &Expr) -> Option<Block> {
         if let ExprKind::Call(call_ident, _) = &expr.kind {
             match self
                 .tcx
@@ -45,12 +73,12 @@ impl<'tcx> Passify<'tcx> {
         let span = span.variant(SpanVariant::Passify);
         let expr_builder = ExprBuilder::new(span);
 
-        let passified_ident = self.tcx.clone_var(ident, span, VarKind::Subst);
+        let passified_ident = self.passify_identifier(ident, span);
         let passified_equals_expr = expr_builder.binary(
             BinOpKind::Eq,
             Some(TyKind::Bool),
             ident_to_expr(self.tcx, span, passified_ident),
-            expr.clone(), // TODO this needs to have the subst applied to it
+            self.substitute_in_expr(expr.clone(), span),
         );
         let mut embedded_passified_equals_expr =
             expr_builder.unary(UnOpKind::Embed, Some(TyKind::Bool), passified_equals_expr);
@@ -73,10 +101,36 @@ impl<'tcx> Passify<'tcx> {
             ],
         ))
     }
+
+    fn encode_nondeterministic_choice(
+        &mut self,
+        branch_a: &mut Block,
+        branch_b: &mut Block,
+    ) -> Result<(), <Passify<'tcx> as VisitorMut>::Err> {
+        let [a_substs, b_substs] = [branch_a, branch_b].map(|branch| {
+            let mut pass_branch = self.clone();
+            pass_branch.visit_block(branch)?;
+            Ok(pass_branch.substitutions)
+        });
+        let (a_substs, b_substs) = (a_substs?, b_substs?);
+
+        let substitution_diff: Vec<_> = a_substs
+            .keys()
+            .chain(b_substs.keys())
+            .unique()
+            .filter(|k| match (a_substs.get(k), b_substs.get(k)) {
+                (Some(a_v), Some(b_v)) => a_v != b_v,
+                (None, None) => unreachable!(),
+                _ => true,
+            })
+            .collect();
+        // TODO assert that the diff contains no keys of self.substitutions
+        todo!()
+    }
 }
 
 impl<'tcx> VisitorMut for Passify<'tcx> {
-    type Err = ();
+    type Err = PassifyError;
 
     fn visit_stmt(&mut self, s: &mut Stmt) -> Result<(), Self::Err> {
         walk_stmt(self, s)?;
@@ -107,7 +161,17 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 s.span = block.span;
                 s.node = StmtKind::Seq(block.node);
             }
-            // StmtKind::Demonic
+            StmtKind::Angelic(..) | StmtKind::Demonic(..) => {
+                let (nondet_direction, branch_a, branch_b) = match &mut s.node {
+                    StmtKind::Angelic(ref mut a, ref mut b) => (Direction::Up, a, b),
+                    StmtKind::Demonic(ref mut a, ref mut b) => (Direction::Down, a, b),
+                    _ => unreachable!(),
+                };
+                if nondet_direction != self.direction {
+                    return Err(PassifyError::DirectionMismatch);
+                }
+                let blocks = self.encode_nondeterministic_choice(branch_a, branch_b);
+            }
             _ => {}
         };
         Ok(())
