@@ -4,8 +4,14 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprKind, Ident, Spanned, TyKind, UnOpKind::{self, Non}, VarKind, diagnostic::{Span, SpanVariant}, stmt::{Direction, Stmt, StmtKind}, visit::{VisitorMut, walk_stmt},
-    }, proof_rules::ident_to_expr, tyctx::TyCtx,
+        diagnostic::{Span, SpanVariant},
+        stmt::{Direction, Stmt, StmtKind},
+        visit::{walk_stmt, VisitorMut},
+        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprKind, Ident, Spanned, TyKind, UnOpKind,
+        VarKind,
+    },
+    proof_rules::ident_to_expr,
+    tyctx::TyCtx,
 };
 #[derive(Debug)]
 pub enum PassifyError {
@@ -30,9 +36,6 @@ impl<'tcx> Passify<'tcx> {
     }
 
     fn passify_identifier(&mut self, ident: Ident, span: Span) -> Ident {
-        if let Some(passified) = self.substitutions.get(&ident) {
-            return *passified;
-        }
         let passified = self.tcx.clone_var(ident, span, VarKind::Subst);
         self.substitutions.insert(ident, passified);
         passified
@@ -46,6 +49,37 @@ impl<'tcx> Passify<'tcx> {
                 .iter()
                 .map(|(k, v)| (*k, ident_to_expr(self.tcx, span, *v))),
         )
+    }
+
+    fn build_havoc_assume(
+        &self,
+        span: Span,
+        passified_ident: Ident,
+        expr: &Expr,
+    ) -> Vec<Spanned<StmtKind>> {
+        let expr_builder = ExprBuilder::new(span);
+        let passified_equals_expr = expr_builder.binary(
+            BinOpKind::Eq,
+            Some(TyKind::Bool),
+            ident_to_expr(self.tcx, span, passified_ident),
+            self.substitute_in_expr(expr.clone(), span), // TODO untested
+        );
+        let mut embedded_passified_equals_expr =
+            expr_builder.unary(UnOpKind::Embed, Some(TyKind::Bool), passified_equals_expr);
+        if self.direction == Direction::Down {
+            embedded_passified_equals_expr = expr_builder.unary(
+                UnOpKind::Not,
+                Some(TyKind::Bool),
+                embedded_passified_equals_expr,
+            )
+        }
+        vec![
+            Spanned::new(span, StmtKind::Havoc(self.direction, vec![passified_ident])),
+            Spanned::new(
+                span,
+                StmtKind::Assume(self.direction, embedded_passified_equals_expr),
+            ),
+        ]
     }
 
     // Builds a passified version of the assignment if possible.
@@ -71,61 +105,77 @@ impl<'tcx> Passify<'tcx> {
         }
 
         let span = span.variant(SpanVariant::Passify);
-        let expr_builder = ExprBuilder::new(span);
-
         let passified_ident = self.passify_identifier(ident, span);
-        let passified_equals_expr = expr_builder.binary(
-            BinOpKind::Eq,
-            Some(TyKind::Bool),
-            ident_to_expr(self.tcx, span, passified_ident),
-            self.substitute_in_expr(expr.clone(), span),
-        );
-        let mut embedded_passified_equals_expr =
-            expr_builder.unary(UnOpKind::Embed, Some(TyKind::Bool), passified_equals_expr);
-        if self.direction == Direction::Down {
-            embedded_passified_equals_expr = expr_builder.unary(
-                UnOpKind::Not,
-                Some(TyKind::Bool),
-                embedded_passified_equals_expr,
-            )
-        }
-
-        Some(Block::new(
-            span,
-            vec![
-                Spanned::new(span, StmtKind::Havoc(self.direction, vec![passified_ident])),
-                Spanned::new(
-                    span,
-                    StmtKind::Assume(self.direction, embedded_passified_equals_expr),
-                ),
-            ],
-        ))
+        let havoc_assume = self.build_havoc_assume(span, passified_ident, expr);
+        Some(Block::new(span, havoc_assume))
     }
 
     fn encode_nondeterministic_choice(
         &mut self,
+        enclosing_span: Span,
         branch_a: &mut Block,
         branch_b: &mut Block,
     ) -> Result<(), <Passify<'tcx> as VisitorMut>::Err> {
-        let [a_substs, b_substs] = [branch_a, branch_b].map(|branch| {
-            let mut pass_branch = self.clone();
-            pass_branch.visit_block(branch)?;
-            Ok(pass_branch.substitutions)
-        });
-        let (a_substs, b_substs) = (a_substs?, b_substs?);
+        // TODO revisit which span I use where
+        let mut pass_branch_a = self.clone();
+        pass_branch_a.visit_block(branch_a)?;
+        let mut pass_branch_b = self.clone();
+        pass_branch_b.visit_block(branch_b)?;
 
-        let substitution_diff: Vec<_> = a_substs
-            .keys()
-            .chain(b_substs.keys())
+        // find the vars that were freshly passified inside the two branches
+        let substitution_diff = (pass_branch_a.substitutions.keys())
+            .chain(pass_branch_b.substitutions.keys())
             .unique()
-            .filter(|k| match (a_substs.get(k), b_substs.get(k)) {
-                (Some(a_v), Some(b_v)) => a_v != b_v,
-                (None, None) => unreachable!(),
-                _ => true,
+            .filter(|k| {
+                match (
+                    pass_branch_a.substitutions.get(k),
+                    pass_branch_b.substitutions.get(k),
+                ) {
+                    (Some(a_v), Some(b_v)) => a_v != b_v,
+                    (None, None) => unreachable!(),
+                    _ => false, // TODO: should this actually be false? we might be assuming vars that are not in scope
+                }
             })
-            .collect();
+            .copied()
+            .collect_vec();
         // TODO assert that the diff contains no keys of self.substitutions
-        todo!()
+
+        // create passified variables to join the branch vars with
+        for differing_var in &substitution_diff {
+            self.passify_identifier(differing_var.clone(), enclosing_span);
+        }
+        for (branch, pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
+            let branch_span = branch.span.variant(SpanVariant::Passify);
+            for differing_ident in &substitution_diff {
+                let passified = (self.substitutions.get(differing_ident))
+                    .expect("these should be preassigned from the loop above");
+                let ident_in_branch = (pass_branch.substitutions.get(differing_ident))
+                    .expect("we are operating on the joined set, this should exist");
+                branch.node.extend(pass_branch.build_havoc_assume(
+                    branch_span,
+                    passified.clone(),
+                    &ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch.clone()),
+                ));
+            }
+            // branch.node.extend(
+            //     substitution_diff
+            //         .iter()
+            //         .copied()
+            //         .map(|differing_ident| {
+            //             let passified = *(self.substitutions.get(&differing_ident))
+            //                 .expect("these should be preassigned from the loop above");
+            //             let ident_in_branch = *(pass_branch.substitutions.get(&differing_ident))
+            //                 .expect("we are operating on the joined set, this should exist");
+            //             pass_branch.build_havoc_assume(
+            //                 branch_span,
+            //                 passified,
+            //                 &ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch),
+            //             )
+            //         })
+            //         .flatten(),
+            // );
+        }
+        Ok(())
     }
 }
 
@@ -170,7 +220,11 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 if nondet_direction != self.direction {
                     return Err(PassifyError::DirectionMismatch);
                 }
-                let blocks = self.encode_nondeterministic_choice(branch_a, branch_b);
+                self.encode_nondeterministic_choice(
+                    s.span.variant(SpanVariant::Passify),
+                    branch_a,
+                    branch_b,
+                )?;
             }
             _ => {}
         };
