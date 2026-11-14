@@ -242,7 +242,7 @@ pub fn multiple_assign(span: Span, lhses: Vec<Ident>, rhses: Vec<Expr>) -> Vec<S
     buf
 }
 
-/// Construct an variable [`Expr`] from the given [`Ident`]
+/// Construct a variable [`Expr`] from the given [`Ident`]
 pub fn ident_to_expr(tcx: &TyCtx, span: Span, ident: Ident) -> Expr {
     let ty = match tcx.get(ident).unwrap().as_ref() {
         DeclKind::VarDecl(var_ref) => var_ref.borrow().ty.clone(),

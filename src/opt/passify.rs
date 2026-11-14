@@ -107,7 +107,7 @@ impl<'tcx> Passify<'tcx> {
         let span = span.variant(SpanVariant::Passify);
         let passified_ident = self.passify_identifier(ident, span);
         let havoc_assume = self.build_havoc_assume(span, passified_ident, expr);
-        Some(Block::new(span, havoc_assume))
+        Some(Spanned::new(span, havoc_assume))
     }
 
     fn encode_nondeterministic_choice(
@@ -157,23 +157,6 @@ impl<'tcx> Passify<'tcx> {
                     &ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch.clone()),
                 ));
             }
-            // branch.node.extend(
-            //     substitution_diff
-            //         .iter()
-            //         .copied()
-            //         .map(|differing_ident| {
-            //             let passified = *(self.substitutions.get(&differing_ident))
-            //                 .expect("these should be preassigned from the loop above");
-            //             let ident_in_branch = *(pass_branch.substitutions.get(&differing_ident))
-            //                 .expect("we are operating on the joined set, this should exist");
-            //             pass_branch.build_havoc_assume(
-            //                 branch_span,
-            //                 passified,
-            //                 &ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch),
-            //             )
-            //         })
-            //         .flatten(),
-            // );
         }
         Ok(())
     }
@@ -183,7 +166,9 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
     type Err = PassifyError;
 
     fn visit_stmt(&mut self, s: &mut Stmt) -> Result<(), Self::Err> {
-        walk_stmt(self, s)?;
+        if !matches!(s.node, StmtKind::Demonic(..) | StmtKind::Angelic(..)) {
+            walk_stmt(self, s)?;
+        }
         match &mut s.node {
             StmtKind::Assign(idents, expr) => {
                 let [ident] = idents.as_slice() else {
