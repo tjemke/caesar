@@ -209,14 +209,14 @@ impl<'tcx> SpecCall<'tcx> {
                         };
                     }
                 }
+                // TODO is there a good reason as to why we are wrapping this in a block at all?
+                // Both callers unwrap it into a Seq immediately
                 return Some(Spanned::new(span, buf));
             }
         }
         None
     }
-}
 
-impl<'tcx> SpecCall<'tcx> {
     /// Assign to a temporary variable for this parameter.
     fn assign_to_temp(&mut self, param: &Param, value: Expr) -> (Stmt, Expr) {
         let span = param.span.variant(SpanVariant::SpecCall);
