@@ -179,6 +179,8 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
             StmtKind::Var(decl_ref) => {
                 let declaration = decl_ref.borrow();
                 let Some(rhs) = &declaration.init else {
+                    self.substitutions
+                        .insert(declaration.name, declaration.name);
                     return Ok(());
                 };
                 let Some(mut block) = self.encode_assign(s.span, declaration.name, rhs) else {
@@ -243,14 +245,32 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
                 )
             }
+            StmtKind::If(expr, branch_a, branch_b) => {
+                let passified_condition =
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify));
+                s.node = StmtKind::If(passified_condition, branch_a.clone(), branch_b.clone());
+            }
+            StmtKind::Compare(_, expr) => {
+                s.node = StmtKind::Compare(
+                    self.direction,
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                )
+            }
+            StmtKind::Weigh(expr) => {
+                s.node = StmtKind::Tick(
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                )
+            }
+            StmtKind::While(expr, block) => {
+                s.node = StmtKind::While(
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                    block.clone(),
+                );
+            }
             _ => {}
         };
         Ok(())
     }
-
-    // fn visit_block(&mut self, block: &mut Block) -> Result<(), Self::Err> {
-    //     todo!()
-    // }
 }
 
 // return sone Span:variant(SpanVariant::Passify)
