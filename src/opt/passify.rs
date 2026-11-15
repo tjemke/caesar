@@ -65,11 +65,11 @@ impl<'tcx> Passify<'tcx> {
             self.substitute_in_expr(expr.clone(), span), // TODO untested
         );
         let mut embedded_passified_equals_expr =
-            expr_builder.unary(UnOpKind::Embed, Some(TyKind::Bool), passified_equals_expr);
-        if self.direction == Direction::Down {
+            expr_builder.unary(UnOpKind::Embed, Some(TyKind::EUReal), passified_equals_expr);
+        if self.direction == Direction::Up {
             embedded_passified_equals_expr = expr_builder.unary(
                 UnOpKind::Not,
-                Some(TyKind::Bool),
+                Some(TyKind::EUReal),
                 embedded_passified_equals_expr,
             )
         }
@@ -210,6 +210,38 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     branch_a,
                     branch_b,
                 )?;
+            }
+            StmtKind::Assert(direction, expr) => {
+                s.node = StmtKind::Assert(
+                    *direction,
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                )
+            }
+            StmtKind::Assume(direction, expr) => {
+                s.node = StmtKind::Assume(
+                    *direction,
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                )
+            }
+            StmtKind::Havoc(direction, idents) => {
+                s.node = StmtKind::Havoc(
+                    *direction,
+                    idents
+                        .clone()
+                        .iter()
+                        .map(|ident| {
+                            *self
+                                .substitutions
+                                .get(ident)
+                                .expect("this should have been declared and thus passified before")
+                        })
+                        .collect(),
+                )
+            }
+            StmtKind::Tick(expr) => {
+                s.node = StmtKind::Tick(
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                )
             }
             _ => {}
         };
