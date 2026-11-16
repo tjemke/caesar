@@ -45,27 +45,48 @@ impl<'tcx> Passify<'tcx> {
     }
 
     fn substitute_in_expr(&self, expr: Expr, span: Span) -> Expr {
+        self.filtered_substitute_in_expr(expr, span, |_| true)
+    }
+
+    fn filtered_substitute_in_expr<F>(&self, expr: Expr, span: Span, filter_idents: F) -> Expr
+    where
+        F: Fn(Ident) -> bool,
+    {
         let builder = ExprBuilder::new(span);
         builder.subst(
             expr,
             self.substitutions
                 .iter()
+                .filter(|(k, _)| filter_idents(**k))
                 .map(|(k, v)| (*k, ident_to_expr(self.tcx, span, *v))),
         )
     }
 
     fn build_havoc_assume(
-        &self,
+        &mut self,
         span: Span,
-        passified_ident: Ident,
+        ident: Ident,
         expr: &Expr,
+        ident_is_passive: bool,
     ) -> Vec<Spanned<StmtKind>> {
         let expr_builder = ExprBuilder::new(span);
+        let passified_expr = self.filtered_substitute_in_expr(expr.clone(), span, |f_ident| {
+            if ident_is_passive {
+                true
+            } else {
+                f_ident != ident
+            }
+        });
+        let passified_ident = if ident_is_passive {
+            ident
+        } else {
+            self.passify_identifier(ident, span)
+        };
         let passified_equals_expr = expr_builder.binary(
             BinOpKind::Eq,
             Some(TyKind::Bool),
             ident_to_expr(self.tcx, span, passified_ident),
-            self.substitute_in_expr(expr.clone(), span), // TODO untested
+            passified_expr,
         );
         let mut embedded_passified_equals_expr =
             expr_builder.unary(UnOpKind::Embed, Some(TyKind::EUReal), passified_equals_expr);
@@ -108,8 +129,7 @@ impl<'tcx> Passify<'tcx> {
         }
 
         let span = span.variant(SpanVariant::Passify);
-        let passified_ident = self.passify_identifier(ident, span);
-        let havoc_assume = self.build_havoc_assume(span, passified_ident, expr);
+        let havoc_assume = self.build_havoc_assume(span, ident, expr, false);
         Some(Spanned::new(span, havoc_assume))
     }
 
@@ -147,7 +167,7 @@ impl<'tcx> Passify<'tcx> {
         for differing_var in &substitution_diff {
             self.passify_identifier(differing_var.clone(), enclosing_span);
         }
-        for (branch, pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
+        for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
             for differing_ident in &substitution_diff {
                 let passified = (self.substitutions.get(differing_ident))
@@ -158,6 +178,7 @@ impl<'tcx> Passify<'tcx> {
                     branch_span,
                     passified.clone(),
                     &ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch.clone()),
+                    true,
                 ));
             }
         }
