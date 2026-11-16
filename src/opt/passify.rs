@@ -133,7 +133,7 @@ impl<'tcx> Passify<'tcx> {
         Some(Spanned::new(span, havoc_assume))
     }
 
-    fn encode_nondeterministic_choice(
+    fn visit_branching_stmt(
         &mut self,
         enclosing_span: Span,
         branch_a: &mut Block,
@@ -190,7 +190,10 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
     type Err = PassifyError;
 
     fn visit_stmt(&mut self, s: &mut Stmt) -> Result<(), Self::Err> {
-        if !matches!(s.node, StmtKind::Demonic(..) | StmtKind::Angelic(..)) {
+        if !matches!(
+            s.node,
+            StmtKind::Demonic(..) | StmtKind::Angelic(..) | StmtKind::If(..)
+        ) {
             walk_stmt(self, s)?;
         }
         match &mut s.node {
@@ -231,7 +234,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 if nondet_direction != self.direction {
                     return Err(PassifyError::DirectionMismatch);
                 }
-                self.encode_nondeterministic_choice(
+                self.visit_branching_stmt(
                     s.span.variant(SpanVariant::Passify),
                     branch_a,
                     branch_b,
@@ -272,7 +275,12 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
             StmtKind::If(expr, branch_a, branch_b) => {
                 let passified_condition =
                     self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify));
-                s.node = StmtKind::If(passified_condition, branch_a.clone(), branch_b.clone());
+                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
+                s.node = StmtKind::If(
+                    passified_condition,
+                    branch_a.to_owned(),
+                    branch_b.to_owned(),
+                );
             }
             StmtKind::Compare(_, expr) => {
                 s.node = StmtKind::Compare(
