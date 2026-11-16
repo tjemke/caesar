@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 
+
+use indexmap::IndexMap;
 use itertools::Itertools;
 
 use crate::{
@@ -16,18 +17,20 @@ use crate::{
 #[derive(Debug)]
 pub enum PassifyError {
     DirectionMismatch,
+    // IdentAlreadyPassified(Ident)
 }
+
 
 #[derive(Clone)]
 pub struct Passify<'tcx> {
     tcx: &'tcx TyCtx,
     direction: Direction,
-    substitutions: HashMap<Ident, Ident>,
+    substitutions: IndexMap<Ident, Ident>,
 }
 
 impl<'tcx> Passify<'tcx> {
     pub fn new(tcx: &'tcx TyCtx, direction: Direction) -> Self {
-        let substitutions = HashMap::new();
+        let substitutions = IndexMap::new();
         Passify {
             tcx,
             direction,
@@ -128,8 +131,8 @@ impl<'tcx> Passify<'tcx> {
             .unique()
             .filter(|k| {
                 match (
-                    pass_branch_a.substitutions.get(k),
-                    pass_branch_b.substitutions.get(k),
+                    pass_branch_a.substitutions.get(*k),
+                    pass_branch_b.substitutions.get(*k),
                 ) {
                     (Some(a_v), Some(b_v)) => a_v != b_v,
                     (None, None) => unreachable!(),
