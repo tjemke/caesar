@@ -122,7 +122,7 @@ pub fn run_benchmark(task: BenchmarkTask) -> io::Result<BenchmarkResult> {
     args.push("--timing".to_owned());
     args.push("--json".to_owned());
 
-    let mut command = Command::new("../target/release/caesar");
+    let mut command = Command::new("./target/release/caesar");
     command.args(&args);
     command.env("RUST_LOG", "caesar=info,caesar::slicing=debug");
 
