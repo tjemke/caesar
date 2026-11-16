@@ -116,12 +116,10 @@ impl<'tcx> Passify<'tcx> {
         }
 
         let span = span.variant(SpanVariant::Passify);
+        // Order of these two is important as we want the newly passified var to not appear in the subst
+        let passified_expr = &self.substitute_in_expr(expr.to_owned(), span);
         let passified_ident = self.passify_identifier(ident, span);
-        let havoc_assume = self.build_havoc_assume(
-            span,
-            passified_ident,
-            &self.filtered_substitute_in_expr(expr.to_owned(), span, |f_ident| f_ident != ident),
-        );
+        let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_expr);
         Some(Spanned::new(span, havoc_assume))
     }
 
@@ -169,10 +167,8 @@ impl<'tcx> Passify<'tcx> {
                 branch.node.extend(pass_branch.build_havoc_assume(
                     branch_span,
                     passified.clone(),
-                    &self.substitute_in_expr(
-                        ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
-                        branch_span,
-                    ),
+                    // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
+                    &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
                 ));
             }
         }
