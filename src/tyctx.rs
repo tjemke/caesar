@@ -102,6 +102,7 @@ impl TyCtx {
                 var_decl.name = new_ident;
                 var_decl.created_from.get_or_insert(ident);
                 var_decl.kind = var_kind;
+                // var_decl.init = None;
                 DeclRef::new(var_decl)
             }
             _ => panic!("identifier is not a variable"),
