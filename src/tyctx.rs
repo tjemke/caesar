@@ -114,6 +114,13 @@ impl TyCtx {
         self.declarations.borrow().get(&ident).cloned()
     }
 
+    pub fn get_var_ty(&self, ident: Ident) -> Option<TyKind> {
+    match self.get(ident)?.as_ref() {
+        DeclKind::VarDecl(var_ref) => Some(var_ref.borrow().ty.clone()),
+        _ => None,
+    }
+}
+
     pub fn get_mut(&mut self, ident: Ident) -> Option<&mut DeclKind> {
         self.declarations
             .get_mut()
