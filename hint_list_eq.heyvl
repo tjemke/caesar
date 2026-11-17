@@ -1,0 +1,18 @@
+domain Sums {
+    func sum(elements: []UReal, start: UInt, len: UInt): UReal = ite(len>0, select(elements, start + (len - 1)) + sum(elements, start, len-1), 0)
+}
+
+// Version A: we are TOLD that a and b are equal.
+proc told_equal(a: []UReal, b: []UReal, n: UInt) -> ()
+    pre ?(a == b && n < len(a))
+    post ?(sum(a, 1, n) == sum(b, 1, n))
+{}
+
+// Version B: b is a COPY of a.
+proc copied(a: []UReal, n: UInt) -> ()
+    pre ?(n < len(a))
+    post ?(true)
+{
+    var b: []UReal = a
+    assert ?(sum(a, 1, n) == sum(b, 1, n))
+}

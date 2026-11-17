@@ -1,0 +1,7 @@
+proc j(c: Bool) -> () pre ?(true) post ?(true) {
+    var y: UInt
+    if c { y = 5 } else { }
+    assert ?(!c || y == 5)
+}
+
+proc w() -> () pre 1 post 1 { weigh 0 }

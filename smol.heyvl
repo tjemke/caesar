@@ -1,0 +1,6 @@
+coproc smol(init_x: UInt) -> () {
+    var x : UInt= init_x
+    if (x > 0) {
+        x = (x - (1))
+    } else {}
+}

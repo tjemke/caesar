@@ -1,0 +1,71 @@
+proc main(init_x: UInt) -> (x: UInt)
+        {
+            var prob_choice: Bool
+            x = init_x
+            @past(x + 1, 0.5, 1)
+            while 0 < x {
+                prob_choice = flip(0.5)
+                if prob_choice {
+                    x = x - 1
+                } else {}
+            }
+        }
+
+// pre passification
+negate
+@success_msg("coproc pre #0 is not necessary")
+coassume (
+    [(((0 < x))[prob_choice -> init_prob_choice])[x -> init_x]] * (
+        (cast(EUReal, (x + 1)))[x -> init_x] - cast(EUReal, 5/10)
+    )
+)
+prob_choice = init_prob_choice
+x = init_x
+if (0 < x) {
+    prob_choice = flip(5/10)
+    if prob_choice { x = (x - 1) } else {  }
+    assert cast(EUReal, (x + 1))
+    assume cast(EUReal, 0)
+} else {
+
+}
+@error_msg("coproc post #0 is part of the error") coassert cast(EUReal, 0)
+conegate
+
+
+// post passification
+negate
+@success_msg("coproc pre #0 is not necessary")
+coassume (
+    [(((0 < x))[prob_choice -> init_prob_choice])[x -> init_x]] * (
+        (cast(EUReal, (x + 1)))[x -> init_x] - cast(EUReal, 5/10)
+    )
+)
+{ cohavoc prob_choice_0; coassume ! (?((prob_choice_0 == init_prob_choice))) }
+{ cohavoc x_1; coassume ! (?((x_1 == (init_x)[prob_choice -> prob_choice_0]))) }
+if (((0 < x))[prob_choice -> prob_choice_0])[x -> x_1] {
+    prob_choice = flip(5/10)
+    if ((prob_choice)[prob_choice -> prob_choice_0])[x -> x_1] {
+        {
+            cohavoc x_2
+            coassume ! (
+                ?((x_2 == (((x - 1))[prob_choice -> prob_choice_0])[x -> x_1]))
+            )
+        }
+        cohavoc x_3
+        coassume ! (?((x_3 == x_2)))
+    } else {
+        cohavoc x_3
+        coassume ! (?((x_3 == x_1)))
+    }
+    assert ((cast(EUReal, (x + 1)))[prob_choice -> prob_choice_0])[x -> x_3]
+    assume ((cast(EUReal, 0))[prob_choice -> prob_choice_0])[x -> x_3]
+    cohavoc x_4
+    coassume ! (?((x_4 == x_3)))
+} else {
+    cohavoc x_4
+    coassume ! (?((x_4 == x_1)))
+}
+@error_msg("coproc post #0 is part of the error")
+coassert ((cast(EUReal, 0))[prob_choice -> prob_choice_0])[x -> x_4]
+conegate

@@ -1,0 +1,60 @@
+// Upstream bug (moves-rwth/caesar main @ f76110a): a loop-local variable whose
+// initializer is a procedure call loses that initializer in every copy of the
+// loop body after the first.
+//
+// `encode_iter` (src/proof_rules/util.rs) clones the loop body, but the clones
+// share one `DeclRef<VarDecl>` per `var` statement. SpecCall lowering
+// (src/procs/spec_call.rs, `decl.init = None`) mutates that shared decl while
+// lowering the first copy, so later copies see a bare `var y: UInt` and reuse
+// the stale value of `y`.
+//
+// Reproduced on upstream (call in `var` init fails, same call as a separate
+// assignment verifies): @unroll (this file), @k_induction(2), @omega_invariant.
+//
+// @ost: its body copies land in two coprocs and one proc, so no callee direction
+// is legal. With a `coproc` callee, the separate-assignment form is rejected
+// ("direction of 'proc main_lower_bound_0' does not match ... 'coproc noop'"),
+// but the `var` init form verifies: the call is gone from the later copies, so
+// the direction check never sees it.
+//
+// Not affected: @invariant and @past (single copy; @past accepts a `coproc`
+// callee in both forms). @ast rejects procedure calls in the body. Calls to
+// `fn`s and intrinsics such as `flip` are not lowered by SpecCall, so they don't
+// trigger this.
+//
+// Expected: both procs verify (x goes 2 -> 1 -> 0).
+// Actual:   `var_init_call` gets a counterexample, `assign_call` verifies.
+
+proc dec(a: UInt) -> (r: UInt)
+    pre 1
+    post [r == a - 1]
+{
+    r = a - 1
+}
+
+// fails: the call is the initializer of the loop-local `var`
+@wp proc var_init_call(init_x: UInt) -> (x: UInt)
+    pre [init_x == 2]
+    post [x == 0]
+{
+    x = init_x
+    @unroll(3, 0)
+    while x > 0 {
+        var y: UInt = dec(x)
+        x = y
+    }
+}
+
+// control: same program, call moved into a separate assignment
+@wp proc assign_call(init_x: UInt) -> (x: UInt)
+    pre [init_x == 2]
+    post [x == 0]
+{
+    x = init_x
+    @unroll(3, 0)
+    while x > 0 {
+        var y: UInt = 0
+        y = dec(x)
+        x = y
+    }
+}
