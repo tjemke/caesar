@@ -19,7 +19,7 @@ use crate::{
         item::SourceUnitName,
         quant_proof::QuantVcProveTask,
     },
-    opt::passify::Passify,
+    opt::passify::{Passify, PassifyError},
     pretty::{Doc, SimplePretty},
     procs::{
         proc_verify::{encode_proc_verify, to_direction_lower_bounds},
@@ -52,9 +52,11 @@ pub fn lower_core_verify_task(
     // 1. Desugaring
     task.desugar_spec_calls(tcx, name.to_string())?;
 
-    println!("Before passification:\n{}\n", task);
-    let _ = task.passify(tcx);
-    println!("After passification:\n{}\n", task);
+    if !options.opt_options.no_passify {
+        println!("Before passification:\n{}\n", task);
+        let _ = task.passify(tcx);
+        println!("After passification:\n{}\n", task);
+    }
 
     // 2. Preparing slicing
     let slice_stmts = task.prepare_slicing(&options.slice_options, tcx, server)?;
@@ -134,8 +136,11 @@ impl CoreVerifyTask {
     pub fn passify(&mut self, tcx: &mut TyCtx) -> Result<(), ()> {
         // Passify gets the direction so that we can apply the transformation according to the proc direction
         let mut pass = Passify::new(tcx, self.direction);
-        let _ = pass.visit_block(&mut self.block).unwrap();
-
+        let mut passified_block = self.block.clone();
+        match pass.visit_block(&mut passified_block) {
+            Ok(()) => self.block = passified_block,
+            Err(PassifyError::DirectionMismatch) => {}
+        }
         Ok(())
     }
 
