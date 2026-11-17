@@ -206,16 +206,8 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 let Some(rhs) = &declaration.init else {
                     return Ok(());
                 };
-                let mut block = self.encode_assign(s.span, declaration.name, rhs)?;
+                let block = self.encode_assign(s.span, declaration.name, rhs)?;
                 drop(declaration);
-                {
-                    let mut declaration = decl_ref.borrow_mut();
-                    declaration.init = None;
-                }
-
-                block
-                    .node
-                    .insert(0, Spanned::new(block.span, StmtKind::Var(decl_ref.clone())));
                 s.span = block.span;
                 s.node = StmtKind::Seq(block.node);
             }
