@@ -191,13 +191,13 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 let [ident] = idents.as_slice() else {
                     unreachable!("SpecCall desugaring should have removed all tuple lhses");
                 };
-                s.node = StmtKind::Seq(self.encode_assign(s.span, *ident, expr).unwrap().node);
+                if let Some(encoding) = self.encode_assign(s.span, *ident, expr) {
+                    s.node = StmtKind::Seq(encoding.node);
+                };
             }
             StmtKind::Var(decl_ref) => {
                 let declaration = decl_ref.borrow();
                 let Some(rhs) = &declaration.init else {
-                    self.substitutions
-                        .insert(declaration.name, declaration.name);
                     return Ok(());
                 };
                 let Some(mut block) = self.encode_assign(s.span, declaration.name, rhs) else {
@@ -248,12 +248,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     idents
                         .clone()
                         .iter()
-                        .map(|ident| {
-                            *self
-                                .substitutions
-                                .get(ident)
-                                .expect("this should have been declared and thus passified before")
-                        })
+                        .map(|ident| *self.substitutions.get(ident).unwrap_or(ident))
                         .collect(),
                 )
             }
@@ -275,17 +270,17 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
             StmtKind::Compare(_, expr) => {
                 s.node = StmtKind::Compare(
                     self.direction,
-                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                    self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                 )
             }
             StmtKind::Weigh(expr) => {
                 s.node = StmtKind::Tick(
-                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                    self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                 )
             }
             StmtKind::While(expr, block) => {
                 s.node = StmtKind::While(
-                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
+                    self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                     block.clone(),
                 );
             }
