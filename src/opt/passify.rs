@@ -17,9 +17,8 @@ use crate::{
 #[derive(Debug)]
 pub enum PassifyError {
     DirectionMismatch,
-    // IdentAlreadyPassified(Ident)
+    NotYetSupported, // IdentAlreadyPassified(Ident)
 }
-
 
 #[derive(Clone)]
 pub struct Passify<'tcx> {
@@ -94,7 +93,12 @@ impl<'tcx> Passify<'tcx> {
     }
 
     // Builds a passified version of the assignment if possible.
-    fn encode_assign(&mut self, span: Span, ident: Ident, expr: &Expr) -> Option<Block> {
+    fn encode_assign(
+        &mut self,
+        span: Span,
+        ident: Ident,
+        expr: &Expr,
+    ) -> Result<Block, PassifyError> {
         if let ExprKind::Call(call_ident, _) = &expr.kind {
             match self
                 .tcx
@@ -111,8 +115,9 @@ impl<'tcx> Passify<'tcx> {
                     )
                 }
             }
+
             // TODO: These need special handling which I'll have to think about later on
-            return None;
+            return Err(PassifyError::NotYetSupported);
         }
 
         let span = span.variant(SpanVariant::Passify);
@@ -120,7 +125,7 @@ impl<'tcx> Passify<'tcx> {
         let passified_expr = &self.substitute_in_expr(expr.to_owned(), span);
         let passified_ident = self.passify_identifier(ident, span);
         let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_expr);
-        Some(Spanned::new(span, havoc_assume))
+        Ok(Spanned::new(span, havoc_assume))
     }
 
     fn visit_branching_stmt(
@@ -191,18 +196,15 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 let [ident] = idents.as_slice() else {
                     unreachable!("SpecCall desugaring should have removed all tuple lhses");
                 };
-                if let Some(encoding) = self.encode_assign(s.span, *ident, expr) {
-                    s.node = StmtKind::Seq(encoding.node);
-                };
+                let encoding = self.encode_assign(s.span, *ident, expr)?;
+                s.node = StmtKind::Seq(encoding.node);
             }
             StmtKind::Var(decl_ref) => {
                 let declaration = decl_ref.borrow();
                 let Some(rhs) = &declaration.init else {
                     return Ok(());
                 };
-                let Some(mut block) = self.encode_assign(s.span, declaration.name, rhs) else {
-                    return Ok(());
-                };
+                let mut block = self.encode_assign(s.span, declaration.name, rhs)?;
                 drop(declaration);
                 {
                     let mut declaration = decl_ref.borrow_mut();
