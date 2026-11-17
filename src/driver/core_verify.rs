@@ -53,9 +53,9 @@ pub fn lower_core_verify_task(
     task.desugar_spec_calls(tcx, name.to_string())?;
 
     if !options.opt_options.no_passify {
-        println!("Before passification:\n{}\n", task);
+        // println!("Before passification:\n{}\n", task);
         let _ = task.passify(tcx);
-        println!("After passification:\n{}\n", task);
+        // println!("After passification:\n{}\n", task);
     }
 
     // 2. Preparing slicing
@@ -229,6 +229,6 @@ impl SimplePretty for CoreVerifyTask {
 
 impl fmt::Display for CoreVerifyTask {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.pretty().render_fmt(80, f)
+        self.pretty().render_fmt(140, f)
     }
 }

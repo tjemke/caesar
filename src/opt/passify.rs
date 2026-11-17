@@ -1,7 +1,6 @@
-
-
 use indexmap::IndexMap;
 use itertools::Itertools;
+use tracing::warn;
 
 use crate::{
     ast::{
@@ -39,7 +38,27 @@ impl<'tcx> Passify<'tcx> {
 
     fn passify_identifier(&mut self, ident: Ident, span: Span) -> Ident {
         let passified = self.tcx.clone_var(ident, span, VarKind::Subst);
-        self.substitutions.insert(ident, passified);
+
+        // TODO: our passified vars should never init as anything. If we all agree, that
+        // there is no reason for a cloned var to ever carry an initialization, we could just
+        // var_decl.init = None inside of clone_var. Here it is fairly hard as we don't have
+        // mut reference to tcx.
+        //
+        // let pass_decl = self
+        //     .tcx
+        //     .get_mut(passified)
+        //     .expect("this should exist as we just declared it");
+        // let  DeclKind::VarDecl(passified_var_decl) = pass_decl
+        // else {
+        //     unreachable!()
+        // };
+        // passified_var_decl.borrow_mut().init = None;
+
+        if let Some(old) = self.substitutions.insert(ident, passified) {
+            // if pass.eq(&passified) {
+            warn!("repassified {} as {}, was {}", ident, passified, old);
+            // };
+        }
         passified
     }
 
@@ -155,7 +174,10 @@ impl<'tcx> Passify<'tcx> {
     ) -> Result<(), <Passify<'tcx> as VisitorMut>::Err> {
         // TODO revisit which span I use where
         let mut pass_branch_a = self.clone();
+        // println!("branch_a:\n{}", branch_a);
         pass_branch_a.visit_block(branch_a)?;
+        // println!("branch_a:\n{}", branch_a);
+        // println!("{:?}", pass_branch_a.substitutions);
         let mut pass_branch_b = self.clone();
         pass_branch_b.visit_block(branch_b)?;
 
@@ -171,6 +193,7 @@ impl<'tcx> Passify<'tcx> {
         for differing_var in &substitution_diff {
             self.passify_identifier(differing_var.clone(), enclosing_span);
         }
+        // println!("{:?}", self.substitutions);
         for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
             for differing_ident in &substitution_diff {

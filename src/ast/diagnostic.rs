@@ -394,6 +394,13 @@ impl<T: SimplePretty> SimplePretty for Spanned<T> {
     }
 }
 
+// impl<T:SimplePretty> fmt::Display for Spanned<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         self.pretty().render_fmt(80, f)
+//     }
+// }
+
+
 /// Like [`Span`], but with character offsets. Needed to interface with ariadne.
 pub struct CharSpan {
     pub file: FileId,
