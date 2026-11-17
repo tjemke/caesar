@@ -139,7 +139,7 @@ impl CoreVerifyTask {
         let mut passified_block = self.block.clone();
         match pass.visit_block(&mut passified_block) {
             Ok(()) => self.block = passified_block,
-            Err(PassifyError::DirectionMismatch) => {}
+            Err(PassifyError::DirectionMismatch | PassifyError::NotYetSupported) => {}
         }
         Ok(())
     }
