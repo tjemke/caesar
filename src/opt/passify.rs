@@ -145,14 +145,16 @@ impl<'tcx> Passify<'tcx> {
             .chain(pass_branch_b.substitutions.keys())
             .unique()
             .filter(|k| {
-                match (
-                    pass_branch_a.substitutions.get(*k),
-                    pass_branch_b.substitutions.get(*k),
-                ) {
-                    (Some(a_v), Some(b_v)) => a_v != b_v,
-                    (None, None) => unreachable!(),
-                    _ => false, // TODO: should this actually be false? we might be assuming vars that are not in scope
-                }
+                pass_branch_a.substitutions.get(*k) != pass_branch_b.substitutions.get(*k)
+                // println!("{}", k);
+                // match (
+                //     pass_branch_a.substitutions.get(*k),
+                //     pass_branch_b.substitutions.get(*k),
+                // ) {
+                //     (Some(a_v), Some(b_v)) => a_v != b_v,
+                //     (None, None) => unreachable!(),
+                //     _ => true, // TODO: should this actually be false? we might be assuming vars that are not in scope
+                // }
             })
             .copied()
             .collect_vec();
@@ -165,16 +167,16 @@ impl<'tcx> Passify<'tcx> {
         for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
             for differing_ident in &substitution_diff {
-                let passified = (self.substitutions.get(differing_ident))
-                    .expect("these should be preassigned from the loop above");
-                let ident_in_branch = (pass_branch.substitutions.get(differing_ident))
-                    .expect("we are operating on the joined set, this should exist");
-                branch.node.extend(pass_branch.build_havoc_assume(
-                    branch_span,
-                    passified.clone(),
-                    // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
-                    &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
-                ));
+                if let Some(ident_in_branch) = pass_branch.substitutions.get(differing_ident) {
+                    let passified = (self.substitutions.get(differing_ident))
+                        .expect("these should be preassigned from the loop above");
+                    branch.node.extend(pass_branch.build_havoc_assume(
+                        branch_span,
+                        passified.clone(),
+                        // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
+                        &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
+                    ));
+                }
             }
         }
         Ok(())
