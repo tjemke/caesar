@@ -83,7 +83,20 @@ impl<'tcx> Passify<'tcx> {
                 embedded_passified_equals_expr,
             )
         }
+        // let DeclKind::VarDecl(passified_var_decl) =
+        //     self.tcx.get(assume_lhs).unwrap().as_ref().clone()
+        // else {
+        //     unreachable!()
+        // };
+        // expr_builder.var(assume_lhs, self.tcx));
+
+        let decl = self.tcx.get(assume_lhs).unwrap();
+        let var_decl_lhs = match decl.as_ref() {
+            DeclKind::VarDecl(var_decl) => var_decl,
+            _ => panic!("expected variable declaration"),
+        };
         vec![
+            Spanned::new(span, StmtKind::Var(var_decl_lhs.clone())),
             Spanned::new(span, StmtKind::Havoc(self.direction, vec![assume_lhs])),
             Spanned::new(
                 span,
