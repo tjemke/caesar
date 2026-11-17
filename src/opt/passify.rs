@@ -66,7 +66,7 @@ impl<'tcx> Passify<'tcx> {
         span: Span,
         assume_lhs: Ident,
         assume_rhs: &Expr,
-    ) -> Vec<Spanned<StmtKind>> {
+    ) -> [Spanned<StmtKind>; 3] {
         let expr_builder = ExprBuilder::new(span);
         let passified_equals_expr = expr_builder.binary(
             BinOpKind::Eq,
@@ -95,7 +95,7 @@ impl<'tcx> Passify<'tcx> {
             DeclKind::VarDecl(var_decl) => var_decl,
             _ => panic!("expected variable declaration"),
         };
-        vec![
+        [
             Spanned::new(span, StmtKind::Var(var_decl_lhs.clone())),
             Spanned::new(span, StmtKind::Havoc(self.direction, vec![assume_lhs])),
             Spanned::new(
@@ -111,7 +111,12 @@ impl<'tcx> Passify<'tcx> {
         span: Span,
         ident: Ident,
         expr: &Expr,
-    ) -> Result<Block, PassifyError> {
+    ) -> Result<[Spanned<StmtKind>; 1 | 3], PassifyError> {
+        match self.tcx.get_var_ty(ident) {
+            Some(TyKind::List(..)) => return Err(PassifyError::NotYetSupported),
+            Some(..) => {}
+            None => panic!(),
+        };
         if let ExprKind::Call(call_ident, _) = &expr.kind {
             match self
                 .tcx
@@ -120,6 +125,7 @@ impl<'tcx> Passify<'tcx> {
                 .as_ref()
             {
                 DeclKind::FuncIntrin(_) => {}
+                DeclKind::FuncDecl(..) => {}
                 DeclKind::ProcIntrin(_) => {}
                 decl_kind => {
                     unreachable!(
@@ -138,7 +144,7 @@ impl<'tcx> Passify<'tcx> {
         let passified_expr = &self.substitute_in_expr(expr.to_owned(), span);
         let passified_ident = self.passify_identifier(ident, span);
         let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_expr);
-        Ok(Spanned::new(span, havoc_assume))
+        Ok(havoc_assume)
     }
 
     fn visit_branching_stmt(
@@ -157,21 +163,9 @@ impl<'tcx> Passify<'tcx> {
         let substitution_diff = (pass_branch_a.substitutions.keys())
             .chain(pass_branch_b.substitutions.keys())
             .unique()
-            .filter(|k| {
-                pass_branch_a.substitutions.get(*k) != pass_branch_b.substitutions.get(*k)
-                // println!("{}", k);
-                // match (
-                //     pass_branch_a.substitutions.get(*k),
-                //     pass_branch_b.substitutions.get(*k),
-                // ) {
-                //     (Some(a_v), Some(b_v)) => a_v != b_v,
-                //     (None, None) => unreachable!(),
-                //     _ => true, // TODO: should this actually be false? we might be assuming vars that are not in scope
-                // }
-            })
+            .filter(|k| pass_branch_a.substitutions.get(*k) != pass_branch_b.substitutions.get(*k))
             .copied()
             .collect_vec();
-        // TODO assert that the diff contains no keys of self.substitutions
 
         // create passified variables to join the branch vars with
         for differing_var in &substitution_diff {
@@ -180,16 +174,19 @@ impl<'tcx> Passify<'tcx> {
         for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
             for differing_ident in &substitution_diff {
-                if let Some(ident_in_branch) = pass_branch.substitutions.get(differing_ident) {
-                    let passified = (self.substitutions.get(differing_ident))
-                        .expect("these should be preassigned from the loop above");
-                    branch.node.extend(pass_branch.build_havoc_assume(
-                        branch_span,
-                        passified.clone(),
-                        // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
-                        &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
-                    ));
-                }
+                let ident_in_branch = pass_branch
+                    .substitutions
+                    .get(differing_ident)
+                    .copied()
+                    .unwrap_or(*differing_ident);
+                let passified = (self.substitutions.get(differing_ident))
+                    .expect("these should be preassigned from the loop above");
+                branch.node.extend(pass_branch.build_havoc_assume(
+                    branch_span,
+                    passified.clone(),
+                    // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
+                    &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
+                ));
             }
         }
         Ok(())
@@ -212,7 +209,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     unreachable!("SpecCall desugaring should have removed all tuple lhses");
                 };
                 let encoding = self.encode_assign(s.span, *ident, expr)?;
-                s.node = StmtKind::Seq(encoding.node);
+                s.node = StmtKind::Seq(encoding.to_vec());
             }
             StmtKind::Var(decl_ref) => {
                 let declaration = decl_ref.borrow();
@@ -221,8 +218,8 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 };
                 let block = self.encode_assign(s.span, declaration.name, rhs)?;
                 drop(declaration);
-                s.span = block.span;
-                s.node = StmtKind::Seq(block.node);
+                s.span = block.get(0).unwrap().span;
+                s.node = StmtKind::Seq(block.to_vec());
             }
             StmtKind::Angelic(..) | StmtKind::Demonic(..) => {
                 let (nondet_direction, branch_a, branch_b) = match &mut s.node {
@@ -283,7 +280,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 )
             }
             StmtKind::Weigh(expr) => {
-                s.node = StmtKind::Tick(
+                s.node = StmtKind::Weigh(
                     self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                 )
             }
