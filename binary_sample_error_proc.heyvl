@@ -1,0 +1,92 @@
+proc binary_sample_error() -> (r: EUReal)
+    pre 0.5
+    post [r >= 1]
+{
+    var b0: UInt
+
+    var choice: Bool = flip(0.5)
+
+    if \cap {
+
+        assume !?(choice); b0 = 0
+
+    } else {
+
+        assume !?(!choice); b0 = 1
+    }
+
+    r = b0
+}
+
+
+proc binary_sample_pass() -> (r: EUReal)
+    pre 0.5
+    post [r >= 1]
+{
+    var b0: UInt
+    var b0_passif: UInt
+    var b0_passelse: UInt
+
+    var choice: Bool = flip(0.5)
+
+    if \cap {
+
+        assume ?(choice)
+
+        havoc b0_passif
+
+        assume ?(b0_passif == 0)
+
+        r = b0_passif
+    } else {
+
+        assume ?(!choice)
+
+        havoc b0_passelse
+
+        assume ?(b0_passelse == 1)
+
+        r = b0_passelse
+    }
+
+}
+
+
+
+proc binary_sample_passified() -> (r: EUReal)
+    pre 0.5
+    post [r >= 1]
+{
+    var b0: UInt
+    var b0_passif: UInt
+    var b0_passelse: UInt
+    var b0_passjoin: UInt
+
+    var choice: Bool = flip(0.5)
+
+    havoc b0_passjoin
+    if \cap {
+        // if branch
+        assume ?(choice)
+
+        havoc b0_passif
+
+        assume ?(b0_passif == 0)
+
+
+        assume ?(b0_passjoin == b0_passif)
+    } else {
+        // else branch
+
+        assume ?(!choice)
+
+        havoc b0_passelse
+
+        assume ?(b0_passelse == 1)
+
+
+        assume ?(b0_passjoin == b0_passelse)
+    }
+
+    r = b0_passjoin
+}

@@ -1,0 +1,12 @@
+@wp proc main() -> ()
+                    pre 1
+                    post 1
+                {
+                    var x: UReal = 1
+                    var bound: UReal = 1
+                    var v: UInt = 7
+                    @ast(bound > 0 && bound <= 1, x, v, bound, 1)
+                    while x > 0 { x = 0 }
+                    assert [v == 7]
+                }
+            

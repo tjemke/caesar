@@ -1,0 +1,39 @@
+// pre pass
+@success_msg("proc pre #0 is not necessary") assume ?(((x <= 1))[x -> init_x])
+@success_msg("proc pre #1 is not necessary") assume ?(((x > 0))[x -> init_x])
+@success_msg("proc pre #2 is not necessary")
+assume cast(EUReal, (cast(UReal, 1))[v -> (cast(UReal, x))[x -> init_x]])
+x = init_x
+var amount: UInt
+x = (x - amount)
+@error_msg("proc post #0 is part of the error")
+assert [(
+    ! ((x > 0)) || (
+        (
+            cast(UReal, x) + (cast(UReal, 1))[v -> (
+                cast(UReal, x)
+            )[x -> init_x]]
+        ) <= (cast(UReal, x))[x -> init_x]
+    )
+)]
+
+// after pass
+@success_msg("proc pre #0 is not necessary") assume ?(((x <= 1))[x -> init_x])
+@success_msg("proc pre #1 is not necessary") assume ?(((x > 0))[x -> init_x])
+@success_msg("proc pre #2 is not necessary")
+assume cast(EUReal, (cast(UReal, 1))[v -> (cast(UReal, x))[x -> init_x]])
+{ havoc x_7; assume ?((x_7 == init_x)) }
+var amount: UInt
+{ havoc x_8; assume ?((x_8 == ((x - amount))[x -> x_7])) }
+@error_msg("proc post #0 is part of the error")
+assert (
+    [(
+        ! ((x > 0)) || (
+            (
+                cast(UReal, x) + (cast(UReal, 1))[v -> (
+                    cast(UReal, x)
+                )[x -> init_x]]
+            ) <= (cast(UReal, x))[x -> init_x]
+        )
+    )]
+)[x -> x_8]
