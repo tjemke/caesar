@@ -229,7 +229,10 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
     fn visit_stmt(&mut self, s: &mut Stmt) -> Result<(), Self::Err> {
         if !matches!(
             s.node,
-            StmtKind::Demonic(..) | StmtKind::Angelic(..) | StmtKind::If(..)
+            StmtKind::Demonic(..)
+                | StmtKind::Angelic(..)
+                | StmtKind::If(..)
+                | StmtKind::Additive(..)
         ) {
             walk_stmt(self, s)?;
         }
@@ -292,6 +295,10 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 s.node = StmtKind::Tick(
                     self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
                 )
+            }
+            StmtKind::Additive(branch_a, branch_b) => {
+                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
+                s.node = StmtKind::Additive(branch_a.to_owned(), branch_b.to_owned());
             }
             StmtKind::If(expr, branch_a, branch_b) => {
                 let passified_condition =
