@@ -196,21 +196,28 @@ impl<'tcx> Passify<'tcx> {
         // println!("{:?}", self.substitutions);
         for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
-            for differing_ident in &substitution_diff {
-                let ident_in_branch = pass_branch
-                    .substitutions
-                    .get(differing_ident)
-                    .copied()
-                    .unwrap_or(*differing_ident);
-                let passified = (self.substitutions.get(differing_ident))
-                    .expect("these should be preassigned from the loop above");
-                branch.node.extend(pass_branch.build_havoc_assume(
-                    branch_span,
-                    passified.clone(),
-                    // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
-                    &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
-                ));
-            }
+            let joining_blocks = substitution_diff
+                .iter()
+                .map(|differing_ident| {
+                    let ident_in_branch = pass_branch
+                        .substitutions
+                        .get(differing_ident)
+                        .copied()
+                        .unwrap_or(*differing_ident);
+                    let passified = (self.substitutions.get(differing_ident))
+                        .expect("these should be preassigned from the loop above");
+                    pass_branch.build_havoc_assume(
+                        branch_span,
+                        passified.clone(),
+                        // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
+                        &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
+                    )
+                })
+                .flatten()
+                .collect_vec();
+            branch
+                .node
+                .push(Spanned::new(branch_span, StmtKind::Seq(joining_blocks)));
         }
         Ok(())
     }
