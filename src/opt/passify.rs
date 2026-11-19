@@ -267,6 +267,20 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     branch_b,
                 )?;
             }
+            StmtKind::Additive(branch_a, branch_b) => {
+                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
+                s.node = StmtKind::Additive(branch_a.to_owned(), branch_b.to_owned());
+            }
+            StmtKind::If(expr, branch_a, branch_b) => {
+                let passified_condition =
+                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify));
+                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
+                s.node = StmtKind::If(
+                    passified_condition,
+                    branch_a.to_owned(),
+                    branch_b.to_owned(),
+                );
+            }
             StmtKind::Assert(direction, expr) => {
                 s.node = StmtKind::Assert(
                     *direction,
@@ -293,20 +307,6 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 s.node = StmtKind::Tick(
                     self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
                 )
-            }
-            StmtKind::Additive(branch_a, branch_b) => {
-                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
-                s.node = StmtKind::Additive(branch_a.to_owned(), branch_b.to_owned());
-            }
-            StmtKind::If(expr, branch_a, branch_b) => {
-                let passified_condition =
-                    self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify));
-                self.visit_branching_stmt(s.span, branch_a, branch_b)?;
-                s.node = StmtKind::If(
-                    passified_condition,
-                    branch_a.to_owned(),
-                    branch_b.to_owned(),
-                );
             }
             StmtKind::Compare(direction, expr) => {
                 s.node = StmtKind::Compare(
