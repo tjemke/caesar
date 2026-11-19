@@ -115,7 +115,7 @@ impl<'tcx> Passify<'tcx> {
             _ => panic!("expected variable declaration"),
         };
         [
-            Spanned::new(span, StmtKind::Var(var_decl_lhs.clone())),
+            Spanned::new(span, StmtKind::Var(var_decl_lhs.clone(), None)),
             Spanned::new(span, StmtKind::Havoc(self.direction, vec![assume_lhs])),
             Spanned::new(
                 span,
@@ -244,14 +244,12 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 let encoding = self.encode_assign(s.span, *ident, expr)?;
                 s.node = StmtKind::Seq(encoding.to_vec());
             }
-            StmtKind::Var(decl_ref) => {
-                let declaration = decl_ref.borrow();
-                let Some(rhs) = &declaration.init else {
-                    return Ok(());
+            StmtKind::Var(_, None) => {}
+            StmtKind::Var(decl_ref, Some(initialization)) => {
+                let block = {
+                    let declaration = decl_ref.borrow();
+                    self.encode_assign(s.span, declaration.name, initialization)?
                 };
-                let block = self.encode_assign(s.span, declaration.name, rhs)?;
-                drop(declaration);
-                s.span = block.get(0).unwrap().span;
                 s.node = StmtKind::Seq(block.to_vec());
             }
             StmtKind::Angelic(..) | StmtKind::Demonic(..) => {
