@@ -296,9 +296,9 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     branch_b.to_owned(),
                 );
             }
-            StmtKind::Compare(_, expr) => {
+            StmtKind::Compare(direction, expr) => {
                 s.node = StmtKind::Compare(
-                    self.direction,
+                    *direction,
                     self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                 )
             }
