@@ -93,12 +93,15 @@ impl<'tcx> Passify<'tcx> {
             ident_to_expr(self.tcx, span, assume_lhs),
             assume_rhs.clone(),
         );
-        let mut embedded_passified_equals_expr =
-            expr_builder.unary(UnOpKind::Embed, Some(TyKind::EUReal), passified_equals_expr);
+        let mut embedded_passified_equals_expr = expr_builder.unary(
+            UnOpKind::Embed,
+            Some(self.tcx.spec_ty().clone()),
+            passified_equals_expr,
+        );
         if self.direction == Direction::Up {
             embedded_passified_equals_expr = expr_builder.unary(
                 UnOpKind::Not,
-                Some(TyKind::EUReal),
+                Some(self.tcx.spec_ty().clone()),
                 embedded_passified_equals_expr,
             )
         }
