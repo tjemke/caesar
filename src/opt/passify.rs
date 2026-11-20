@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use indexmap::IndexMap;
 use itertools::Itertools;
 use tracing::warn;
@@ -7,8 +9,12 @@ use crate::{
         diagnostic::{Span, SpanVariant},
         stmt::{Direction, Stmt, StmtKind},
         visit::{walk_stmt, VisitorMut},
-        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprKind, Ident, Spanned, TyKind, UnOpKind,
-        VarKind,
+        BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprData, ExprKind, Ident, Shared, Spanned,
+        TyKind, UnOpKind, VarKind,
+    },
+    intrinsic::{
+        distributions::{Dist, DistributionProc},
+        ProcIntrin,
     },
     proof_rules::ident_to_expr,
     tyctx::TyCtx,
@@ -127,19 +133,64 @@ impl<'tcx> Passify<'tcx> {
         ]
     }
 
+    fn encode_intrinsic_proc(
+        &mut self,
+        assign_to: Ident,
+        span: Span,
+        proc_name: Rc<dyn ProcIntrin>,
+        args: &[Expr],
+    ) -> Result<Block, PassifyError> {
+        let proc = proc_name
+            .as_any_rc()
+            .downcast::<DistributionProc>()
+            .unwrap();
+        match proc.name().name.to_owned().as_str() {
+            "flip" => {
+                let span = span.variant(SpanVariant::Passify);
+                let expr_builder = ExprBuilder::new(span);
+                let Dist(outcomes) = (proc.apply)(args, expr_builder);
+                let branches: Vec<Block> = outcomes
+                    .into_iter()
+                    .map(|(probability, value)| {
+                        let probability = self.substitute_in_expr(probability, span);
+                        let value = &self.substitute_in_expr(value, span);
+                        let [_, havoc, assume] = self.build_havoc_assume(span, assign_to, value);
+                        Spanned::new(
+                            span,
+                            vec![
+                                Spanned::new(span, StmtKind::Weigh(probability)),
+                                havoc,
+                                assume,
+                            ],
+                        )
+                    })
+                    .collect();
+                let folded: Option<Spanned<Vec<Spanned<StmtKind>>>> =
+                    branches.into_iter().reduce(|acc, new_branch| {
+                        Spanned::new(
+                            span,
+                            vec![Spanned::new(span, StmtKind::Additive(acc, new_branch))],
+                        )
+                    });
+                Ok(folded.expect("each distribution should have at least two values"))
+            }
+            _ => return Err(PassifyError::NotYetSupported),
+        }
+    }
+
     // Builds a passified version of the assignment if possible.
     fn encode_assign(
         &mut self,
         span: Span,
         ident: Ident,
         expr: &Expr,
-    ) -> Result<[Spanned<StmtKind>; 1 | 3], PassifyError> {
+    ) -> Result<Block, PassifyError> {
         match self.tcx.get_var_ty(ident) {
             Some(TyKind::List(..)) => return Err(PassifyError::NotYetSupported),
             Some(..) => {}
             None => panic!(),
         };
-        if let ExprKind::Call(call_ident, _) = &expr.kind {
+        if let ExprKind::Call(call_ident, args) = &expr.kind {
             match self
                 .tcx
                 .get(*call_ident)
@@ -148,7 +199,30 @@ impl<'tcx> Passify<'tcx> {
             {
                 DeclKind::FuncIntrin(_) => {}
                 DeclKind::FuncDecl(..) => {}
-                DeclKind::ProcIntrin(_) => {}
+                DeclKind::ProcIntrin(proc) => {
+                    let args = &args
+                        .iter()
+                        .map(|arg| match arg.kind {
+                            ExprKind::Lit(_) => arg.clone(),
+                            _ => self.substitute_in_expr(arg.clone(), span),
+                        })
+                        .collect_vec();
+                    let passified_ident = self.passify_identifier(ident, span);
+                    // return self.encode_intrinsic_proc(passified_ident, span, proc.clone(), args);
+                    // let builder = ExprBuilder::new(span);
+                    let new_rhs = Shared::new(ExprData {
+                        kind: ExprKind::Call(*call_ident, args.clone()),
+                        ty: expr.ty.clone(),
+                        span,
+                    });
+                    return Ok(Spanned::new(
+                        span,
+                        vec![Spanned::new(
+                            span,
+                            StmtKind::Assign(vec![passified_ident], new_rhs),
+                        )],
+                    ));
+                }
                 decl_kind => {
                     unreachable!(
                         "Everything but intrinsics should have been desugared, got a {:?}",
@@ -166,7 +240,7 @@ impl<'tcx> Passify<'tcx> {
         let passified_expr = &self.substitute_in_expr(expr.to_owned(), span);
         let passified_ident = self.passify_identifier(ident, span);
         let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_expr);
-        Ok(havoc_assume)
+        Ok(Spanned::new(span, havoc_assume.to_vec()))
     }
 
     fn visit_branching_stmt(
@@ -245,7 +319,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     unreachable!("SpecCall desugaring should have removed all tuple lhses");
                 };
                 let encoding = self.encode_assign(s.span, *ident, expr)?;
-                s.node = StmtKind::Seq(encoding.to_vec());
+                s.node = StmtKind::Seq(encoding.node);
             }
             StmtKind::Var(_, None) => {}
             StmtKind::Var(decl_ref, Some(initialization)) => {
@@ -253,7 +327,7 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     let declaration = decl_ref.borrow();
                     self.encode_assign(s.span, declaration.name, initialization)?
                 };
-                s.node = StmtKind::Seq(block.to_vec());
+                s.node = StmtKind::Seq(block.node);
             }
             StmtKind::Angelic(..) | StmtKind::Demonic(..) => {
                 let (nondet_direction, branch_a, branch_b) = match &mut s.node {
