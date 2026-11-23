@@ -11,7 +11,7 @@ use crate::{
     depgraph::{DepGraph, Dependencies},
     driver::{
         commands::{
-            options::{LanguageServerOptions, SliceOptions},
+            options::{LanguageServerOptions, OptimizationOptions, SliceOptions},
             verify::VerifyCommand,
         },
         error::CaesarError,
@@ -54,7 +54,7 @@ pub fn lower_core_verify_task(
 
     if !options.opt_options.no_passify {
         // println!("Before passification:\n{}\n", task);
-        let _ = task.passify(tcx);
+        let _ = task.passify(tcx, &options.opt_options);
         // println!("After passification:\n{}\n", task);
     }
 
@@ -133,9 +133,9 @@ impl CoreVerifyTask {
     }
 
     #[instrument(skip_all)]
-    pub fn passify(&mut self, tcx: &mut TyCtx) -> Result<(), ()> {
+    pub fn passify(&mut self, tcx: &mut TyCtx, options: &OptimizationOptions) -> Result<(), ()> {
         // Passify gets the direction so that we can apply the transformation according to the proc direction
-        let mut pass = Passify::new(tcx, self.direction);
+        let mut pass = Passify::new(tcx, self.direction, options);
         let mut passified_block = self.block.clone();
         match pass.visit_block(&mut passified_block) {
             Ok(()) => self.block = passified_block,

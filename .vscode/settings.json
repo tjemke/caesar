@@ -9,5 +9,8 @@
     "typescript.tsc.autoDetect": "off",
     "eslint.workingDirectories": [
         "./vscode-ext"
+    ],
+    "cSpell.words": [
+        "Passify"
     ]
 }

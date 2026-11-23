@@ -11,6 +11,7 @@ use crate::{
         BinOpKind, Block, DeclKind, Expr, ExprBuilder, ExprData, ExprKind, Ident, Shared, Spanned,
         TyKind, UnOpKind, VarKind,
     },
+    driver::commands::options::OptimizationOptions,
     intrinsic::{
         distributions::{Dist, DistributionProc},
         ProcIntrin,
@@ -29,15 +30,19 @@ pub struct Passify<'tcx> {
     tcx: &'tcx TyCtx,
     direction: Direction,
     substitutions: IndexMap<Ident, Ident>,
+    encode_distributions: bool,
+    skip_distribution: bool,
 }
 
 impl<'tcx> Passify<'tcx> {
-    pub fn new(tcx: &'tcx TyCtx, direction: Direction) -> Self {
+    pub fn new(tcx: &'tcx TyCtx, direction: Direction, options: &OptimizationOptions) -> Self {
         let substitutions = IndexMap::new();
         Passify {
             tcx,
             direction,
             substitutions,
+            encode_distributions: options.encode_dist,
+            skip_distribution: options.skip_dist,
         }
     }
 
@@ -179,6 +184,9 @@ impl<'tcx> Passify<'tcx> {
                 DeclKind::FuncIntrin(_) => {}
                 DeclKind::FuncDecl(..) => {}
                 DeclKind::ProcIntrin(proc) => {
+                    if self.skip_distribution {
+                        return Err(PassifyError::NotYetSupported);
+                    }
                     let args = &args
                         .iter()
                         .map(|arg| match arg.kind {
@@ -187,8 +195,14 @@ impl<'tcx> Passify<'tcx> {
                         })
                         .collect_vec();
                     let passified_ident = self.passify_identifier(ident, span);
-                    // return self.encode_intrinsic_proc(passified_ident, span, proc.clone(), args);
-                    // let builder = ExprBuilder::new(span);
+                    if self.encode_distributions {
+                        return self.encode_intrinsic_proc(
+                            passified_ident,
+                            span,
+                            proc.clone(),
+                            args,
+                        );
+                    }
                     let new_rhs = Shared::new(ExprData {
                         kind: ExprKind::Call(*call_ident, args.clone()),
                         ty: expr.ty.clone(),
