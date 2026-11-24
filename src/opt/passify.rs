@@ -375,11 +375,9 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
                 )
             }
-            StmtKind::While(expr, block) => {
-                s.node = StmtKind::While(
-                    self.substitute_in_expr(expr.to_owned(), s.span.variant(SpanVariant::Passify)),
-                    block.clone(),
-                );
+            StmtKind::While(..) => {
+                // This should already have been desugared through a proof rule. If it still occurs,
+                // vcgen will spit out a diagnostic later on, so we allow it to just pass through.
             }
             _ => {}
         };
