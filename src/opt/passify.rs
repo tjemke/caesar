@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use itertools::Itertools;
-use tracing::warn;
 
 use crate::{
     ast::{
@@ -44,27 +43,7 @@ impl<'tcx> Passify<'tcx> {
 
     fn passify_identifier(&mut self, ident: Ident, span: Span) -> Ident {
         let passified = self.tcx.clone_var(ident, span, VarKind::Subst);
-
-        // TODO: our passified vars should never init as anything. If we all agree, that
-        // there is no reason for a cloned var to ever carry an initialization, we could just
-        // var_decl.init = None inside of clone_var. Here it is fairly hard as we don't have
-        // mut reference to tcx.
-        //
-        // let pass_decl = self
-        //     .tcx
-        //     .get_mut(passified)
-        //     .expect("this should exist as we just declared it");
-        // let  DeclKind::VarDecl(passified_var_decl) = pass_decl
-        // else {
-        //     unreachable!()
-        // };
-        // passified_var_decl.borrow_mut().init = None;
-
-        if let Some(old) = self.substitutions.insert(ident, passified) {
-            // if pass.eq(&passified) {
-            warn!("repassified {} as {}, was {}", ident, passified, old);
-            // };
-        }
+        self.substitutions.insert(ident, passified);
         passified
     }
 
