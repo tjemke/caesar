@@ -400,7 +400,6 @@ impl<T: SimplePretty> SimplePretty for Spanned<T> {
 //     }
 // }
 
-
 /// Like [`Span`], but with character offsets. Needed to interface with ariadne.
 pub struct CharSpan {
     pub file: FileId,

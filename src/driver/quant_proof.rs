@@ -12,8 +12,7 @@ use crate::{
     depgraph::Dependencies,
     driver::{commands::verify::VerifyCommand, error::CaesarError, item::SourceUnitName},
     opt::{
-        boolify::Boolify, qelim::Qelim, relational::Relational,
-        unfolder::Unfolder, RemoveParens,
+        boolify::Boolify, qelim::Qelim, relational::Relational, unfolder::Unfolder, RemoveParens,
     },
     resource_limits::{LimitError, LimitsRef},
     smt::{funcs::axiomatic::AxiomaticFunctionEncoder, DepConfig, SmtCtx},

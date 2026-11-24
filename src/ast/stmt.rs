@@ -27,7 +27,7 @@ impl Display for Stmt {
 
 impl Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.node.pretty().render_fmt(80,f)
+        self.node.pretty().render_fmt(80, f)
     }
 }
 
