@@ -1,0 +1,128 @@
+// RUN: @caesar @file --timeout 5
+
+// The passified shape of ten fair coin flips assembled into a number
+// (x = 2 * x + bit), written with `assume !?(v != e)` instead of the
+// equivalent `assume ?(v == e)`. Boolify only rewrites `?(b) -> f`, so the
+// negated form falls back to the generic implication `ite(a <= f, top, f)`,
+// which duplicates the continuation at every assume. With `?(v == e)` the
+// same program verifies in well under a second; with `!?(v != e)` it times out.
+//
+proc assume_negated_embed() -> (x: UInt)
+    pre 1023/2
+    post x
+{
+    var b1: Bool
+    var b2: Bool
+    var b3: Bool
+    var b4: Bool
+    var b5: Bool
+    var b6: Bool
+    var b7: Bool
+    var b8: Bool
+    var b9: Bool
+    var b10: Bool
+    var x0: UInt
+    var x1: UInt
+    var x2: UInt
+    var x3: UInt
+    var x4: UInt
+    var x5: UInt
+    var x6: UInt
+    var x7: UInt
+    var x8: UInt
+    var x9: UInt
+    var x10: UInt
+    havoc x0
+    assume !?(x0 != 0)
+    if ⊕ { weigh 1/2
+        havoc b1
+        assume !?(b1 != true)
+    } else { weigh 1/2
+        havoc b1
+        assume !?(b1 != false)
+    }
+    havoc x1
+    assume !?(x1 != 2 * x0 + ite(b1, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b2
+        assume !?(b2 != true)
+    } else { weigh 1/2
+        havoc b2
+        assume !?(b2 != false)
+    }
+    havoc x2
+    assume !?(x2 != 2 * x1 + ite(b2, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b3
+        assume !?(b3 != true)
+    } else { weigh 1/2
+        havoc b3
+        assume !?(b3 != false)
+    }
+    havoc x3
+    assume !?(x3 != 2 * x2 + ite(b3, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b4
+        assume !?(b4 != true)
+    } else { weigh 1/2
+        havoc b4
+        assume !?(b4 != false)
+    }
+    havoc x4
+    assume !?(x4 != 2 * x3 + ite(b4, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b5
+        assume !?(b5 != true)
+    } else { weigh 1/2
+        havoc b5
+        assume !?(b5 != false)
+    }
+    havoc x5
+    assume !?(x5 != 2 * x4 + ite(b5, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b6
+        assume !?(b6 != true)
+    } else { weigh 1/2
+        havoc b6
+        assume !?(b6 != false)
+    }
+    havoc x6
+    assume !?(x6 != 2 * x5 + ite(b6, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b7
+        assume !?(b7 != true)
+    } else { weigh 1/2
+        havoc b7
+        assume !?(b7 != false)
+    }
+    havoc x7
+    assume !?(x7 != 2 * x6 + ite(b7, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b8
+        assume !?(b8 != true)
+    } else { weigh 1/2
+        havoc b8
+        assume !?(b8 != false)
+    }
+    havoc x8
+    assume !?(x8 != 2 * x7 + ite(b8, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b9
+        assume !?(b9 != true)
+    } else { weigh 1/2
+        havoc b9
+        assume !?(b9 != false)
+    }
+    havoc x9
+    assume !?(x9 != 2 * x8 + ite(b9, 1, 0))
+    if ⊕ { weigh 1/2
+        havoc b10
+        assume !?(b10 != true)
+    } else { weigh 1/2
+        havoc b10
+        assume !?(b10 != false)
+    }
+    havoc x10
+    assume !?(x10 != 2 * x9 + ite(b10, 1, 0))
+    x = x10
+}

@@ -1,0 +1,127 @@
+// RUN: @caesar @file --timeout 5
+
+// The coproc dual of assume-negated-embed.heyvl: the passified shape of ten
+// fair coin flips assembled into a number (x = 2 * x + bit), written with
+// `coassume !?(v == e)`, which is what passify emits for upper bounds.
+// Boolify only rewrites `?(b) <- f`, so the negated form falls back to the
+// generic coimplication, which duplicates the continuation at every coassume.
+//
+coproc coassume_negated_embed() -> (x: UInt)
+    pre 1023/2
+    post x
+{
+    var b1: Bool
+    var b2: Bool
+    var b3: Bool
+    var b4: Bool
+    var b5: Bool
+    var b6: Bool
+    var b7: Bool
+    var b8: Bool
+    var b9: Bool
+    var b10: Bool
+    var x0: UInt
+    var x1: UInt
+    var x2: UInt
+    var x3: UInt
+    var x4: UInt
+    var x5: UInt
+    var x6: UInt
+    var x7: UInt
+    var x8: UInt
+    var x9: UInt
+    var x10: UInt
+    cohavoc x0
+    coassume !?(x0 == 0)
+    if ⊕ { weigh 1/2
+        cohavoc b1
+        coassume !?(b1 == true)
+    } else { weigh 1/2
+        cohavoc b1
+        coassume !?(b1 == false)
+    }
+    cohavoc x1
+    coassume !?(x1 == 2 * x0 + ite(b1, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b2
+        coassume !?(b2 == true)
+    } else { weigh 1/2
+        cohavoc b2
+        coassume !?(b2 == false)
+    }
+    cohavoc x2
+    coassume !?(x2 == 2 * x1 + ite(b2, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b3
+        coassume !?(b3 == true)
+    } else { weigh 1/2
+        cohavoc b3
+        coassume !?(b3 == false)
+    }
+    cohavoc x3
+    coassume !?(x3 == 2 * x2 + ite(b3, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b4
+        coassume !?(b4 == true)
+    } else { weigh 1/2
+        cohavoc b4
+        coassume !?(b4 == false)
+    }
+    cohavoc x4
+    coassume !?(x4 == 2 * x3 + ite(b4, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b5
+        coassume !?(b5 == true)
+    } else { weigh 1/2
+        cohavoc b5
+        coassume !?(b5 == false)
+    }
+    cohavoc x5
+    coassume !?(x5 == 2 * x4 + ite(b5, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b6
+        coassume !?(b6 == true)
+    } else { weigh 1/2
+        cohavoc b6
+        coassume !?(b6 == false)
+    }
+    cohavoc x6
+    coassume !?(x6 == 2 * x5 + ite(b6, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b7
+        coassume !?(b7 == true)
+    } else { weigh 1/2
+        cohavoc b7
+        coassume !?(b7 == false)
+    }
+    cohavoc x7
+    coassume !?(x7 == 2 * x6 + ite(b7, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b8
+        coassume !?(b8 == true)
+    } else { weigh 1/2
+        cohavoc b8
+        coassume !?(b8 == false)
+    }
+    cohavoc x8
+    coassume !?(x8 == 2 * x7 + ite(b8, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b9
+        coassume !?(b9 == true)
+    } else { weigh 1/2
+        cohavoc b9
+        coassume !?(b9 == false)
+    }
+    cohavoc x9
+    coassume !?(x9 == 2 * x8 + ite(b9, 1, 0))
+    if ⊕ { weigh 1/2
+        cohavoc b10
+        coassume !?(b10 == true)
+    } else { weigh 1/2
+        cohavoc b10
+        coassume !?(b10 == false)
+    }
+    cohavoc x10
+    coassume !?(x10 == 2 * x9 + ite(b10, 1, 0))
+    x = x10
+}
