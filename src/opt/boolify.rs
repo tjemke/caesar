@@ -42,43 +42,37 @@ impl VisitorMut for Boolify {
                     BinOpKind::Le => Some(self.visit_leq(span, lhs, rhs)?),
                     // match lhs >= rhs
                     BinOpKind::Ge => Some(self.visit_leq(span, rhs, lhs)?),
-                    // match ?(b) -> rhs, equivalent to ite(b, rhs, \top)
-                    BinOpKind::Impl => {
+                    // match  ?(b) -> rhs, equivalent to ite(b, rhs, \top)
+                    //       !?(b) -> rhs, equivalent to ite(b, \top, rhs)
+                    //        ?(b) <- rhs, equivalent to ite(b, \bot, rhs)
+                    //       !?(b) <- rhs, equivalent to ite(b, rhs, \bot)
+                    op @ (BinOpKind::Impl | BinOpKind::CoImpl) => {
                         self.visit_expr(lhs)?;
                         self.visit_expr(rhs)?;
-                        let ty = lhs.ty.clone();
-                        match &mut lhs.kind {
-                            ExprKind::Unary(un_op, operand) if un_op.node == UnOpKind::Embed => {
-                                let builder = ExprBuilder::new(span.variant(SpanVariant::Boolify));
-                                Some(builder.ite(
-                                    ty,
-                                    operand.clone(),
-                                    rhs.clone(),
-                                    builder.top_lit(lhs.ty.as_ref().unwrap()),
-                                ))
+                        // Peel an optional negation; it swaps the ite branches.
+                        let (negated, guard) = match &lhs.kind {
+                            ExprKind::Unary(not, inner)
+                                if matches![not.node, UnOpKind::Not | UnOpKind::Non] =>
+                            {
+                                (true, inner)
                             }
+                            _ => (false, &*lhs),
+                        };
+                        let cond = match &guard.kind {
+                            ExprKind::Unary(un_op, cond) if un_op.node == UnOpKind::Embed => cond,
                             // Both children have already been visited.
                             _ => return Ok(()),
-                        }
-                    }
-                    // match ?(b) <- rhs, equivalent to ite(b, \bot, rhs)
-                    BinOpKind::CoImpl => {
-                        self.visit_expr(lhs)?;
-                        self.visit_expr(rhs)?;
-                        let ty = lhs.ty.clone();
-                        match &mut lhs.kind {
-                            ExprKind::Unary(un_op, operand) if un_op.node == UnOpKind::Embed => {
-                                let builder = ExprBuilder::new(span.variant(SpanVariant::Boolify));
-                                Some(builder.ite(
-                                    ty,
-                                    operand.clone(),
-                                    builder.bot_lit(lhs.ty.as_ref().unwrap()),
-                                    rhs.clone(),
-                                ))
-                            }
-                            // Both children have already been visited.
-                            _ => return Ok(()),
-                        }
+                        };
+                        let builder = ExprBuilder::new(span.variant(SpanVariant::Boolify));
+                        let lhs_ty = lhs.ty.as_ref().unwrap();
+                        // impl goes upwards to \top, while coimpl goes towards \bot
+                        let (then, els) = if op == BinOpKind::Impl {
+                            (rhs.clone(), builder.top_lit(lhs_ty))
+                        } else {
+                            (builder.bot_lit(lhs_ty), rhs.clone())
+                        };
+                        let (then, els) = if negated { (els, then) } else { (then, els) };
+                        Some(builder.ite(lhs.ty.clone(), cond.clone(), then, els))
                     }
                     _ => None,
                 }

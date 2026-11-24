@@ -443,6 +443,7 @@ impl ExprBuilder {
         ExprBuilder { span }
     }
 
+    /// Construct a variable [`Expr`] from the given [`Ident`]
     pub fn var(&self, ident: Ident, tcx: &TyCtx) -> Expr {
         let decl = tcx.get(ident).unwrap();
         let ty = match decl.as_ref() {
