@@ -234,7 +234,7 @@ pub fn mk_function_encoder<'ctx>(
             }
         }
         FunctionEncodingOption::DefineFunRec => {
-            if partial_encoding == PartialEncoding::StrengthenToTotal {
+            if partial_encoding == PartialEncoding::Partial {
                 return Err(CaesarError::UserError(
                     "--function-encoding define-fun-rec does not support disabling function strengthening.".into(),
                 ));

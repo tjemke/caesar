@@ -1,0 +1,13 @@
+// RUN: bash -c '@caesar verify --function-encoding define-fun-rec --no-partial-strengthening @file 2>&1 | grep -q "does not support disabling function strengthening"'
+
+// The define-fun-rec encoding always strengthens function definitions, so
+// disabling strengthening must be rejected (see define-fun-rec.heyvl).
+
+domain Fib {
+    func fib(n: UInt): UInt = ite(n <= 1, n, fib(n - 1) + fib(n - 2))
+}
+
+proc fib_five() -> ()
+{
+    assert ?(fib(5) == 5)
+}

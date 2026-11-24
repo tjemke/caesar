@@ -1,0 +1,14 @@
+// RUN: @caesar verify --function-encoding define-fun-rec @file
+
+// The define-fun-rec encoding must work with the default options. It used to
+// be rejected with "does not support disabling function strengthening" unless
+// --no-partial-strengthening was given, i.e. the check was inverted.
+
+domain Fib {
+    func fib(n: UInt): UInt = ite(n <= 1, n, fib(n - 1) + fib(n - 2))
+}
+
+proc fib_five() -> ()
+{
+    assert ?(fib(5) == 5)
+}
