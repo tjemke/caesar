@@ -81,29 +81,20 @@ impl<'tcx> Passify<'tcx> {
     ) -> [Spanned<StmtKind>; 3] {
         let expr_builder = ExprBuilder::new(span);
         let passified_equals_expr = expr_builder.binary(
-            BinOpKind::Eq,
+            if self.direction == Direction::Up {
+                BinOpKind::Ne
+            } else {
+                BinOpKind::Eq
+            },
             Some(TyKind::Bool),
             ident_to_expr(self.tcx, span, assume_lhs),
             assume_rhs.clone(),
         );
-        let mut embedded_passified_equals_expr = expr_builder.unary(
+        let embedded_passified_equals_expr = expr_builder.unary(
             UnOpKind::Embed,
             Some(self.tcx.spec_ty().clone()),
             passified_equals_expr,
         );
-        if self.direction == Direction::Up {
-            embedded_passified_equals_expr = expr_builder.unary(
-                UnOpKind::Not,
-                Some(self.tcx.spec_ty().clone()),
-                embedded_passified_equals_expr,
-            )
-        }
-        // let DeclKind::VarDecl(passified_var_decl) =
-        //     self.tcx.get(assume_lhs).unwrap().as_ref().clone()
-        // else {
-        //     unreachable!()
-        // };
-        // expr_builder.var(assume_lhs, self.tcx));
 
         let decl = self.tcx.get(assume_lhs).unwrap();
         let var_decl_lhs = match decl.as_ref() {
