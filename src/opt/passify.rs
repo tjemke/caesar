@@ -32,6 +32,7 @@ pub struct Passify<'tcx> {
     substitutions: IndexMap<Ident, Ident>,
     encode_distributions: bool,
     skip_distribution: bool,
+    stop_passifying_idents: bool,
 }
 
 impl<'tcx> Passify<'tcx> {
@@ -43,10 +44,12 @@ impl<'tcx> Passify<'tcx> {
             substitutions,
             encode_distributions: options.encode_dist,
             skip_distribution: options.skip_dist,
+            stop_passifying_idents: false,
         }
     }
 
     fn passify_identifier(&mut self, ident: Ident, span: Span) -> Ident {
+        // assert!(!self.stop_passifying_idents);
         let passified = self.tcx.clone_var(ident, span, VarKind::Subst);
         self.substitutions.insert(ident, passified);
         passified
@@ -160,6 +163,13 @@ impl<'tcx> Passify<'tcx> {
             }
             _ => return Err(PassifyError::NotYetSupported),
         }
+    }
+
+    fn passified_stmt(&self, span: Span, lhs: Ident, rhs: Expr) -> Stmt {
+        todo!();
+        // if self.stop_passifying_idents {
+        //     Spanned::new(span, node)
+        // }
     }
 
     // Builds a passified version of the assignment if possible.
@@ -358,10 +368,13 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 )
             }
             StmtKind::Assume(direction, expr) => {
+                if self.direction != *direction {
+                    self.stop_passifying_idents = true;
+                }
                 s.node = StmtKind::Assume(
                     *direction,
                     self.substitute_in_expr(expr.clone(), s.span.variant(SpanVariant::Passify)),
-                )
+                );
             }
             StmtKind::Havoc(direction, idents) => {
                 s.node = StmtKind::Havoc(
