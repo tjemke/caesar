@@ -4,7 +4,8 @@ mode beats the other.
 
 Usage:
   python3 branchsearch.py <path/to/caesar> [--samples 40] [--climb 40]
-        [--objective no-passify|passify|balanced [--target S] [--ladder 5,10,...]]
+        [--objective no-passify|passify|balanced|crossover [--target S] [--ladder 1,2,...]]
+        [--end-passify "<branchgen args>"] [--end-no-passify "<branchgen args>"]
         [--timeout 20] [--search-seed 0]
         [--start "<branchgen args>"] [--space key=v1,v2,...]...
         [--confirm K [--z3-seeds 1,2,3] [--hyperfine 5]] [--out DIR]
@@ -37,6 +38,27 @@ Score, depending on --objective:
               programs. Pick --timeout well above --target (default target:
               timeout / 3). Without the ladder nearly every random config is
               either trivial (startup noise, nothing to compare) or times out.
+  crossover   bisection between the two sides of the spectrum. Endpoint A is
+              a shape where passify is much faster, endpoint B one where
+              --no-passify is (given with --end-passify / --end-no-passify, or
+              taken as the two extremes of --samples random shapes). Every
+              parameter is interpolated linearly from A (t=0) to B (t=1); the
+              *_ratio parameters stay continuous, integers are rounded,
+              gen_seed and coproc are pinned to one endpoint's value. The
+              endpoints are grown along the size ladder like balanced shapes;
+              the whole path is then measured at ONE size (--cross-units,
+              default: the larger of the two endpoint sizes where the slower
+              mode reached --target or a run timed out), because which mode
+              wins also depends on the size (substituted terms grow
+              exponentially with program length). At each point the sign of
+              s = log2(t_passify / t_no_passify)  says which mode wins (known
+              also if exactly one mode timed out). Every round evaluates --jobs points inside
+              the current interval [lo, hi] and keeps the sub-interval where s
+              changes sign, for --rounds rounds or until the interval is a
+              single discrete step (an integer parameter jumping). Each round
+              shrinks the interval by a factor of jobs + 1. Results:
+              crossover.csv (all points on the path, ordered by t) and a top
+              list of the points closest to s = 0, which --confirm re-measures.
 For no-passify/passify, timed-out runs count as --timeout seconds (the score is
 then a lower bound) and times are floored at 0.05s against startup noise. A run
 counts as timed out whenever caesar gives no verdict (it reports timeouts as
@@ -133,6 +155,28 @@ def describe(cfg):
     return " ".join(to_args(cfg))
 
 
+RATIO_KEYS = [k for k in SPACE if k.endswith("_ratio")]
+PINNED = ("gen_seed", "coproc")  # interpolating these would just swap programs
+
+
+def interp(a, b, t):
+    """Config at position t on the straight line from config a (t=0) to b (t=1)."""
+    c = {}
+    for k in SPACE:
+        if k in PINNED or isinstance(a[k], bool):
+            c[k] = a[k]
+        elif k in RATIO_KEYS:
+            c[k] = round(a[k] + t * (b[k] - a[k]), 4)
+        else:
+            c[k] = int(round(a[k] + t * (b[k] - a[k])))
+    return repair(c)
+
+
+def signed(r):
+    """log2(t_passify / t_no_passify) of a run record; timeouts count as --timeout."""
+    return math.log2(max(r["t_passify"], FLOOR) / max(r["t_no_passify"], FLOOR))
+
+
 def from_args(argstr):
     """Config from a branchgen argument string (unset params get branchgen's defaults)."""
     a = branchgen.parser().parse_args(argstr.split())
@@ -162,7 +206,7 @@ class Search:
     def mutate(self, cfg):
         cfg = dict(cfg)
         # balanced: units is set by the size ladder, not searched
-        fixed = ("units",) if self.a.objective == "balanced" else ()
+        fixed = ("units",) if self.laddered() else ()
         for k in self.rng.sample([k for k in self.space if len(self.space[k][1]) > 1 and k not in fixed],
                                  self.rng.choice([1, 1, 2])):
             vals = self.space[k][1]
@@ -174,13 +218,16 @@ class Search:
         return repair(cfg)
 
     def score(self, tp, tn):
-        if self.a.objective == "balanced":  # per rung; the shape score is set in evaluate()
+        if self.laddered():  # per rung; the shape score is set in evaluate()
             return -abs(math.log2(max(tp, FLOOR) / max(tn, FLOOR)))
         s = math.log2(max(tp, FLOOR) / max(tn, FLOOR))
         return s if self.a.objective == "no-passify" else -s
 
+    def laddered(self):
+        return self.a.objective in ("balanced", "crossover")
+
     def evaluate(self, cfg, phase):
-        if self.a.objective != "balanced":
+        if not self.laddered():
             return self.run_cfg(cfg, phase)
         # Size ladder: the shape (all params but units) decides the ratio of the
         # two modes, the size decides the runtime. Grow units until one mode
@@ -190,31 +237,49 @@ class Search:
         with self.lock:
             if k in self.shapes:
                 return self.shapes[k]
-        last, reached = None, False
+        last, reached, stop = None, False, None
         for u in self.a.ladder:
             r = self.run_cfg(dict(cfg, units=u), f"{phase}/u{u}")
             if r is None or r["excluded"]:
+                stop = r
                 break
             last = r
             if max(r["t_passify"], r["t_no_passify"]) >= self.a.target:
                 reached = True
                 break
+        # Which mode wins at (about) --target: from the final rung, or from the
+        # rung where exactly one mode timed out before the target was reached
+        # (then the winner is clear, the ratio a lower bound).
+        decisive = None
+        if stop and not reached and (branchrun.finished(stop["v_passify"])
+                                     != branchrun.finished(stop["v_no_passify"])):
+            decisive = stop
+        elif last:
+            decisive = last
         if last is None:  # not even the smallest rung finished in both modes
+            shape = None
+            if decisive:  # ...but one mode clearly wins: usable for crossover
+                shape = dict(decisive, reached=False, excluded=True, signed=signed(decisive),
+                             score=UNREACHED, decisive=decisive)
             with self.lock:
-                self.shapes[k] = None
-            return None
+                self.shapes[k] = shape
+            return shape
         slow = max(last["t_passify"], last["t_no_passify"])
-        shape = dict(last, reached=reached,
+        shape = dict(last, reached=reached, signed=signed(decisive),
                      score=last["score"] if reached else UNREACHED + math.log2(max(slow, FLOOR)))
         with self.lock:
             self.shapes[k] = shape
+        shape["decisive"] = decisive
         self.log(f"    shape {'reached' if reached else 'did NOT reach'} --target {self.a.target:g}s"
-                 f" at units={last['cfg']['units']}: score {shape['score']:+.2f}  {describe(dict(cfg, units=0))}")
+                 f" at units={last['cfg']['units']}: score {shape['score']:+.2f}; at units="
+                 f"{decisive['cfg']['units']} passify {decisive['t_passify']:.2f}s no-passify "
+                 f"{decisive['t_no_passify']:.2f}s, log2 ratio {shape['signed']:+.2f}"
+                 f"  {describe(dict(cfg, units=0))}")
         return shape
 
     def eval_key(self, cfg):
         """What evaluate() deduplicates on: the shape for balanced, else the config."""
-        return key(dict(cfg, units=None)) if self.a.objective == "balanced" else key(cfg)
+        return key(dict(cfg, units=None)) if self.laddered() else key(cfg)
 
     def log(self, msg):
         with self.lock:
@@ -252,7 +317,7 @@ class Search:
             res[mode] = (a.timeout if timed_out else dt, verdict, timed_out, mmax)
         (tp, vp, top, ssa_meas), (tn, vn, ton, _) = res["passify"], res["--no-passify"]
         # "excluded": not comparable, never counts as best / as an improvement
-        excluded = (top or ton) if a.objective == "balanced" else (top and ton)
+        excluded = (top or ton) if self.laddered() else (top and ton)
         both_out = top and ton
         sc = 0.0 if excluded else self.score(tp, tn)
         r = dict(cfg=cfg, path=path, score=sc, t_passify=tp, t_no_passify=tn,
@@ -277,10 +342,131 @@ class Search:
         return r
 
     def best(self, k=1):
-        pool = self.shapes if self.a.objective == "balanced" else self.cache
+        pool = self.shapes if self.laddered() else self.cache
         with self.lock:
             rs = [r for r in pool.values() if r and not r["excluded"]]
         return sorted(rs, key=lambda r: -r["score"])[:k]
+
+
+class _Done(Exception):
+    """crossover finished; skip the sampling/climbing of the other objectives."""
+
+
+def rung_signed(r):
+    """Sign information of a single run record, or None if not comparable."""
+    if r is None or not (branchrun.finished(r["v_passify"]) or branchrun.finished(r["v_no_passify"])):
+        return None
+    return signed(r)
+
+
+def crossover(a, s, run_batch):
+    known = lambda r: r is not None and r.get("signed") is not None  # noqa: E731
+
+    # 1. endpoints, each grown along the size ladder
+    ends = {}
+    if a.end_passify:
+        ends["A"] = from_args(a.end_passify)
+    if a.end_no_passify:
+        ends["B"] = from_args(a.end_no_passify)
+    if len(ends) < 2:
+        rs = [r for r in run_batch([s.random_cfg() for _ in range(a.samples)], "random") if known(r)]
+        if not rs:
+            sys.exit("no random shape gave a usable measurement; raise --timeout or --samples")
+        rs.sort(key=lambda r: r["signed"])
+        ends.setdefault("A", rs[0]["cfg"])
+        ends.setdefault("B", rs[-1]["cfg"])
+    A, B = ends["A"], ends["B"]
+
+    # 2. pin gen_seed/coproc to one endpoint's values; the pinned endpoints must
+    #    still lie on opposite sides
+    pair = None
+    for a_, b_ in [(A, B), (A, dict(B, **{k: A[k] for k in PINNED})),
+                   (dict(A, **{k: B[k] for k in PINNED}), B)]:
+        if any(a_[k] != b_[k] for k in PINNED):
+            continue
+        ra, rb = run_batch([a_, b_], "end")
+        if known(ra) and known(rb) and ra["signed"] < 0 < rb["signed"]:
+            pair = (a_, b_, ra, rb)
+            break
+        s.log(f"endpoint pair not on opposite sides: {ra and ra.get('signed')} / {rb and rb.get('signed')}")
+    if pair is None:
+        sys.exit("could not find endpoints with passify winning at one and --no-passify at the other "
+                 "(with gen_seed/coproc pinned); give them with --end-passify / --end-no-passify")
+    A, B, ra, rb = pair
+
+    # 3. one size for the whole path, then make sure the endpoints still disagree there
+    U = a.cross_units or max(ra["decisive"]["cfg"]["units"], rb["decisive"]["cfg"]["units"])
+    A, B = dict(A, units=U), dict(B, units=U)
+    ra, rb = run_batch([A, B], "end", fixed_size=True)
+    sa, sb = rung_signed(ra), rung_signed(rb)
+    if sa is None or sb is None or not sa < 0 < sb:
+        sys.exit(f"at --cross-units {U} the endpoints do not lie on opposite sides "
+                 f"(log2 ratios {sa} / {sb}); try another --cross-units")
+    s.log(f"\ncrossover at units={U} between\n"
+          f"  A (t=0, passify {2**-sa:.1f}x faster):     {describe(A)}\n"
+          f"  B (t=1, --no-passify {2**sb:.1f}x faster): {describe(B)}")
+
+    # 4. bisection (N-section with --jobs points per round)
+    points = {0.0: ra, 1.0: rb}
+    lo, hi = 0.0, 1.0
+    for rnd in range(a.rounds):
+        n = max(1, a.jobs)
+        ts = [lo + (hi - lo) * i / (n + 1) for i in range(1, n + 1)]
+        cfgs = [dict(interp(A, B, t), units=U) for t in ts]
+        ends_k = (key(dict(interp(A, B, lo), units=U)), key(dict(interp(A, B, hi), units=U)))
+        if all(key(c) in ends_k for c in cfgs):
+            s.log("interval is a single discrete step, stopping")
+            break
+        run_batch(cfgs, f"bisect{rnd}", fixed_size=True)
+        for t, c in zip(ts, cfgs):
+            points[t] = s.cache.get(key(c))
+        # new interval: first sign change from passify-wins to no-passify-wins
+        seq = [(t, rung_signed(points[t])) for t in sorted(points) if lo <= t <= hi]
+        seq = [(t, v) for t, v in seq if v is not None]
+        for (t0, v0), (t1, v1) in zip(seq, seq[1:]):
+            if v0 < 0 <= v1:
+                lo, hi = t0, t1
+                break
+        s.log(f"round {rnd}: interval t in [{lo:.4f}, {hi:.4f}]  "
+              f"log2 ratio {rung_signed(points[lo]):+.2f} .. {rung_signed(points[hi]):+.2f}")
+
+    # 5. report the path
+    path = os.path.join(a.out, "crossover.csv")
+    with open(path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["t", "units", "log2_tp_over_tn", "t_passify", "t_no_passify",
+                    "v_passify", "v_no_passify", "file", "genargs"])
+        for t in sorted(points):
+            r, v = points[t], rung_signed(points[t])
+            if r is None:
+                w.writerow([f"{t:.5f}", U, "", "", "", "", "", "", describe(dict(interp(A, B, t), units=U))])
+                continue
+            w.writerow([f"{t:.5f}", U, "" if v is None else f"{v:.3f}", f"{r['t_passify']:.3f}",
+                        f"{r['t_no_passify']:.3f}", r["v_passify"], r["v_no_passify"], r["path"],
+                        describe(r["cfg"])])
+    print(f"\npath from A (t=0) to B (t=1) at units={U}, log2(t_passify / t_no_passify), * = timed out:")
+    for t in sorted(points):
+        r, v = points[t], rung_signed(points[t])
+        if v is None:
+            print(f"  t={t:.4f}  (no measurement)")
+            continue
+        sp = "*" if not branchrun.finished(r["v_passify"]) else " "
+        sn = "*" if not branchrun.finished(r["v_no_passify"]) else " "
+        print(f"  t={t:.4f}  {v:+6.2f}  passify {r['t_passify']:6.2f}s{sp} no-passify {r['t_no_passify']:6.2f}s{sn}")
+    clo, chi = interp(A, B, lo), interp(A, B, hi)
+    diff = [f"{k}: {clo[k]} -> {chi[k]}" for k in SPACE if k != "units" and clo[k] != chi[k]]
+    print(f"final interval t in [{lo:.4f}, {hi:.4f}]; parameters that still differ: {', '.join(diff) or 'none'}")
+    print(f"path written to {path}")
+
+    # points on the path ranked by closeness to equal runtime; timeouts last
+    ranked = []
+    for t, r in points.items():
+        v = rung_signed(r)
+        if v is None:
+            continue
+        both = branchrun.finished(r["v_passify"]) and branchrun.finished(r["v_no_passify"])
+        ranked.append(dict(r, score=-abs(v) if both else UNREACHED - abs(v)))
+    return sorted(ranked, key=lambda r: -r["score"])
 
 
 def main():
@@ -288,13 +474,21 @@ def main():
     ap.add_argument("caesar")
     ap.add_argument("--samples", type=int, default=40, help="random configs to evaluate (default 40)")
     ap.add_argument("--climb", type=int, default=40, help="hill-climbing steps afterwards (default 40)")
-    ap.add_argument("--objective", choices=["no-passify", "passify", "balanced"], default="no-passify",
-                    help="which mode should win, or balanced: both slow and about equal (default: no-passify)")
+    ap.add_argument("--objective", choices=["no-passify", "passify", "balanced", "crossover"], default="no-passify",
+                    help="which mode should win; balanced: both slow and about equal (hill climbing); "
+                         "crossover: bisect between a passify-wins and a no-passify-wins shape (default: no-passify)")
+    ap.add_argument("--end-passify", metavar="ARGS",
+                    help="crossover: branchgen args of a shape where passify wins (default: best of --samples)")
+    ap.add_argument("--end-no-passify", metavar="ARGS",
+                    help="crossover: branchgen args of a shape where --no-passify wins (default: best of --samples)")
+    ap.add_argument("--rounds", type=int, default=8, help="crossover: bisection rounds (default 8)")
+    ap.add_argument("--cross-units", type=int, default=None,
+                    help="crossover: --units for every point on the path (default: from the endpoints' ladders)")
     ap.add_argument("--ladder", type=branchrun.ints, default=LADDER,
-                    help=f"balanced: --units values tried per shape, smallest first "
+                    help=f"balanced/crossover: --units values tried per shape, smallest first "
                          f"(default {','.join(map(str, LADDER))}, ~sqrt(2) steps)")
     ap.add_argument("--target", type=float, default=None,
-                    help="balanced: stop growing a shape once a mode takes this long (default --timeout / 3)")
+                    help="balanced/crossover: stop growing a shape once a mode takes this long (default --timeout / 3)")
     ap.add_argument("--timeout", type=int, default=20, help="caesar --timeout per run (default 20)")
     ap.add_argument("--mem", type=int, default=None,
                     help="caesar --mem (MB) per run (caesar's default: 8192). --no-passify typically "
@@ -332,15 +526,21 @@ def main():
     s = Search(a, space)
     ex = ThreadPoolExecutor(max_workers=a.jobs)
 
-    def run_batch(cfgs, phase):
+    def run_batch(cfgs, phase, fixed_size=False):
         """Evaluate configs on the worker pool (deduplicated, configs drawn in
-        this thread so the search seed alone decides what gets tried)."""
+        this thread so the search seed alone decides what gets tried).
+        fixed_size: one run per config at its own units (no ladder)."""
         uniq = {}
         for c in cfgs:
-            uniq.setdefault(s.eval_key(c), c)
-        return list(ex.map(lambda c: s.evaluate(c, phase), uniq.values()))
+            uniq.setdefault(key(c) if fixed_size else s.eval_key(c), c)
+        fn = s.run_cfg if fixed_size else s.evaluate
+        return list(ex.map(lambda c: fn(c, phase), uniq.values()))
 
+    cross_top = None
     try:
+        if a.objective == "crossover":
+            cross_top = crossover(a, s, run_batch)
+            raise _Done
         if a.start:
             run_batch([from_args(a.start)], "start")
         run_batch([s.random_cfg() for _ in range(a.samples)], "random")
@@ -363,11 +563,17 @@ def main():
     except KeyboardInterrupt:
         print("\ninterrupted, results so far:", file=sys.stderr)
         ex.shutdown(wait=False, cancel_futures=True)
+    except _Done:
+        ex.shutdown()
     else:
         ex.shutdown()
 
     top = s.best(a.top)
-    if a.objective == "balanced":
+    if cross_top is not None:
+        top = cross_top[:a.top]
+        print(f"\ntop {len(top)} points on the path, closest to equal runtime "
+              f"(score = -|log2 time ratio|, 0 = equal; * = a run timed out):")
+    elif s.laddered():
         print(f"\ntop {len(top)} shapes, at the size where the slower mode first took >= {a.target:g}s "
               f"(score = -|log2 time ratio|, 0 = equal; <= {UNREACHED:g}: target not reached):")
     else:
