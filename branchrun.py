@@ -119,8 +119,12 @@ def measured_versions(core):
     )
 
 
+# extra caesar flags for every run, e.g. ["--mem", "4096"] (set from --mem)
+EXTRA_FLAGS = []
+
+
 def mode_flags(mode, z3_seed=None):
-    flags = [] if mode == "passify" else mode.split()
+    flags = ([] if mode == "passify" else mode.split()) + EXTRA_FLAGS
     if z3_seed is not None:
         flags += ["--z3-seed", str(z3_seed)]
     return flags
@@ -275,12 +279,17 @@ def main():
                          "(default: don't pass the flag)")
     ap.add_argument("--modes", default="passify,--no-passify", help="comma separated")
     ap.add_argument("--timeout", type=int, default=30)
+    ap.add_argument("--mem", type=int, default=None,
+                    help="caesar --mem (MB) per run; caesar's default is 8192. With parallel runs keep "
+                         "jobs x mem below the RAM")
     ap.add_argument("--out", default="branch-bench", help="directory for generated .heyvl files")
     ap.add_argument("--csv", default=None, help="CSV file to append to (default <out>/results.csv)")
     ap.add_argument("--hyperfine", type=int, default=0, metavar="N", help="also benchmark each file with hyperfine, N runs per mode")
     ap.add_argument("--warmup", type=int, default=1, help="hyperfine warmup runs (default 1)")
     a = ap.parse_args(argv)
 
+    if a.mem:
+        EXTRA_FLAGS[:] = ["--mem", str(a.mem)]
     os.makedirs(a.out, exist_ok=True)
     csv_path = a.csv or os.path.join(a.out, "results.csv")
     new = not os.path.exists(csv_path)

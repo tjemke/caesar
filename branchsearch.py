@@ -40,7 +40,8 @@ Score, depending on --objective:
 For no-passify/passify, timed-out runs count as --timeout seconds (the score is
 then a lower bound) and times are floored at 0.05s against startup noise. A run
 counts as timed out whenever caesar gives no verdict (it reports timeouts as
-"Timed out ..." or as "error: Interrupted");
+"Timed out ..." or as "error: Interrupted"; running out of --mem, which is how
+--no-passify usually fails, counts the same);
 configs where both modes time out are excluded. Configs with more than
 --max-assigns assignments in the program text are skipped without running
 caesar.
@@ -295,6 +296,9 @@ def main():
     ap.add_argument("--target", type=float, default=None,
                     help="balanced: stop growing a shape once a mode takes this long (default --timeout / 3)")
     ap.add_argument("--timeout", type=int, default=20, help="caesar --timeout per run (default 20)")
+    ap.add_argument("--mem", type=int, default=None,
+                    help="caesar --mem (MB) per run (caesar's default: 8192). --no-passify typically "
+                         "fails by exhausting memory, so with --jobs keep jobs x mem below the RAM")
     ap.add_argument("--jobs", "-j", type=int, default=1,
                     help="configs evaluated in parallel (default 1). caesar uses one core per run, so "
                          "up to the number of *physical* cores minus one; --confirm always runs serially")
@@ -323,6 +327,8 @@ def main():
 
     if a.target is None:
         a.target = a.timeout / 3
+    if a.mem:
+        branchrun.EXTRA_FLAGS[:] = ["--mem", str(a.mem)]
     s = Search(a, space)
     ex = ThreadPoolExecutor(max_workers=a.jobs)
 
@@ -380,6 +386,7 @@ def main():
             subprocess.run(
                 [sys.executable, os.path.join(HERE, "branchrun.py"), a.caesar,
                  "--timeout", str(a.timeout), "--hyperfine", str(a.hyperfine),
+                 *(["--mem", str(a.mem)] if a.mem else []),
                  "--z3-seeds", ",".join(map(str, a.z3_seeds)), "--out", a.out, "--csv", conf_csv,
                  "--ratios", str(r["cfg"]["branch_ratio"]), "--depths", str(r["cfg"]["depth"]),
                  "--gen-seeds", str(r["cfg"]["gen_seed"]), "--"]
