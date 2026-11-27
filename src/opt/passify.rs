@@ -111,6 +111,21 @@ impl<'tcx> Passify<'tcx> {
         ]
     }
 
+    fn passified_stmt(&mut self, span: Span, lhs: Ident, rhs: &Expr) -> Stmt {
+        let passified_rhs = &self.substitute_in_expr(rhs.to_owned(), span);
+        if self.stop_passifying_idents {
+            let passified_ident = self.substitutions.get(&lhs).unwrap_or(&lhs);
+            Spanned::new(
+                span,
+                StmtKind::Assign(vec![*passified_ident], passified_rhs.clone()),
+            )
+        } else {
+            let passified_ident = self.passify_identifier(lhs, span);
+            let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_rhs);
+            Spanned::new(span, StmtKind::Seq(havoc_assume.to_vec()))
+        }
+    }
+
     fn encode_intrinsic_proc(
         &mut self,
         assign_to: Ident,
@@ -156,20 +171,13 @@ impl<'tcx> Passify<'tcx> {
         }
     }
 
-    fn passified_stmt(&self, span: Span, lhs: Ident, rhs: Expr) -> Stmt {
-        todo!();
-        // if self.stop_passifying_idents {
-        //     Spanned::new(span, node)
-        // }
-    }
-
     // Builds a passified version of the assignment if possible.
     fn encode_assign(
         &mut self,
         span: Span,
         ident: Ident,
         expr: &Expr,
-    ) -> Result<Block, PassifyError> {
+    ) -> Result<Stmt, PassifyError> {
         match self.tcx.get_var_ty(ident) {
             Some(TyKind::List(..)) => return Err(PassifyError::NotYetSupported),
             Some(..) => {}
@@ -197,12 +205,12 @@ impl<'tcx> Passify<'tcx> {
                         .collect_vec();
                     let passified_ident = self.passify_identifier(ident, span);
                     if self.encode_distributions {
-                        return self.encode_intrinsic_proc(
-                            passified_ident,
-                            span,
-                            proc.clone(),
-                            args,
-                        );
+                        // return self.encode_intrinsic_proc(
+                        //     passified_ident,
+                        //     span,
+                        //     proc.clone(),
+                        //     args,
+                        // );
                     }
                     let new_rhs = Shared::new(ExprData {
                         kind: ExprKind::Call(*call_ident, args.clone()),
@@ -211,10 +219,7 @@ impl<'tcx> Passify<'tcx> {
                     });
                     return Ok(Spanned::new(
                         span,
-                        vec![Spanned::new(
-                            span,
-                            StmtKind::Assign(vec![passified_ident], new_rhs),
-                        )],
+                        StmtKind::Assign(vec![passified_ident], new_rhs),
                     ));
                 }
                 decl_kind => {
@@ -230,11 +235,7 @@ impl<'tcx> Passify<'tcx> {
         }
 
         let span = span.variant(SpanVariant::Passify);
-        // Order of these two is important as we want the newly passified var to not appear in the subst
-        let passified_expr = &self.substitute_in_expr(expr.to_owned(), span);
-        let passified_ident = self.passify_identifier(ident, span);
-        let havoc_assume = self.build_havoc_assume(span, passified_ident, passified_expr);
-        Ok(Spanned::new(span, havoc_assume.to_vec()))
+        Ok(self.passified_stmt(span, ident, expr))
     }
 
     fn visit_branching_stmt(
@@ -260,36 +261,47 @@ impl<'tcx> Passify<'tcx> {
             .copied()
             .collect_vec();
 
+        // If either branch passed an opposite-direction assume, everything after this
+        // branching statement is below that assume in the vc as well.
+        let stopped_in_a_branch =
+            pass_branch_a.stop_passifying_idents || pass_branch_b.stop_passifying_idents;
+
         // create passified variables to join the branch vars with
         for differing_var in &substitution_diff {
             self.passify_identifier(differing_var.clone(), enclosing_span);
         }
-        // println!("{:?}", self.substitutions);
         for (branch, mut pass_branch) in [(branch_a, pass_branch_a), (branch_b, pass_branch_b)] {
             let branch_span = branch.span.variant(SpanVariant::Passify);
             let joining_blocks = substitution_diff
                 .iter()
-                .map(|differing_ident| {
+                .flat_map(|differing_ident| {
                     let ident_in_branch = pass_branch
                         .substitutions
                         .get(differing_ident)
                         .copied()
                         .unwrap_or(*differing_ident);
-                    let passified = (self.substitutions.get(differing_ident))
+                    let passified = *(self.substitutions.get(differing_ident))
                         .expect("these should be preassigned from the loop above");
-                    pass_branch.build_havoc_assume(
-                        branch_span,
-                        passified.clone(),
-                        // TODO: I removed the substitution wrapping here and I am pretty sure that is correct, but I need to verify
-                        &ident_to_expr(&pass_branch.tcx, branch_span, ident_in_branch.clone()),
-                    )
+                    let rhs = ident_to_expr(pass_branch.tcx, branch_span, ident_in_branch);
+                    if pass_branch.stop_passifying_idents {
+                        // A havoc here would sit below the opposite-direction assume in the vc,
+                        // where qelim cannot remove its quantifier, so join with a plain assignment.
+                        vec![Spanned::new(
+                            branch_span,
+                            StmtKind::Assign(vec![passified], rhs),
+                        )]
+                    } else {
+                        pass_branch
+                            .build_havoc_assume(branch_span, passified, &rhs)
+                            .to_vec()
+                    }
                 })
-                .flatten()
                 .collect_vec();
             branch
                 .node
                 .push(Spanned::new(branch_span, StmtKind::Seq(joining_blocks)));
         }
+        self.stop_passifying_idents |= stopped_in_a_branch;
         Ok(())
     }
 }
@@ -312,8 +324,9 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                 let [ident] = idents.as_slice() else {
                     unreachable!("SpecCall desugaring should have removed all tuple lhses");
                 };
-                let encoding = self.encode_assign(s.span, *ident, expr)?;
-                s.node = StmtKind::Seq(encoding.node);
+                let encoded = self.encode_assign(s.span, *ident, expr)?;
+                s.node = encoded.node;
+                s.span = encoded.span
             }
             StmtKind::Var(_, None) => {}
             StmtKind::Var(decl_ref, Some(initialization)) => {
@@ -321,7 +334,8 @@ impl<'tcx> VisitorMut for Passify<'tcx> {
                     let declaration = decl_ref.borrow();
                     self.encode_assign(s.span, declaration.name, initialization)?
                 };
-                s.node = StmtKind::Seq(block.node);
+                s.node = block.node;
+                s.span = block.span;
             }
             StmtKind::Angelic(..) | StmtKind::Demonic(..) => {
                 let (nondet_direction, branch_a, branch_b) = match &mut s.node {
