@@ -12,9 +12,11 @@ Usage:
 Search:
   1. evaluate the --start config (if given) and --samples random configs drawn
      from the parameter space,
-  2. hill-climb --climb steps from the best config found so far: change one or
-     two parameters to a neighbouring value of their list (sometimes a random
-     one) and keep the change if the score did not get worse,
+  2. hill-climb --climb evaluations from the best config found so far: change
+     one or two parameters to a neighbouring value of their list (sometimes a
+     random one) and keep the change if the score did not get worse; with
+     --jobs N, each round tries N such mutations in parallel and moves to the
+     best of them,
   3. optionally (--confirm K) re-measure the K best configs with hyperfine across
      --z3-seeds via branchrun.py's machinery, so a single lucky/unlucky Z3 run
      does not decide the ranking.
@@ -59,6 +61,8 @@ import random
 import re
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -144,6 +148,7 @@ class Search:
         self.rng = random.Random(a.search_seed)
         self.cache = {}
         self.shapes = {}  # balanced: shape key -> result at its final ladder rung
+        self.lock = threading.RLock()  # cache, shapes, counter, CSV and stdout
         self.n = 0
         os.makedirs(a.out, exist_ok=True)
         self.csv_path = os.path.join(a.out, "search.csv")
@@ -180,9 +185,10 @@ class Search:
         # two modes, the size decides the runtime. Grow units until one mode
         # reaches --target seconds or a run times out / gets too big; the shape
         # is judged at the largest size where both modes finished.
-        k = key(dict(cfg, units=None))
-        if k in self.shapes:
-            return self.shapes[k]
+        k = self.eval_key(cfg)
+        with self.lock:
+            if k in self.shapes:
+                return self.shapes[k]
         last, reached = None, False
         for u in self.a.ladder:
             r = self.run_cfg(dict(cfg, units=u), f"{phase}/u{u}")
@@ -193,34 +199,48 @@ class Search:
                 reached = True
                 break
         if last is None:  # not even the smallest rung finished in both modes
-            self.shapes[k] = None
+            with self.lock:
+                self.shapes[k] = None
             return None
         slow = max(last["t_passify"], last["t_no_passify"])
         shape = dict(last, reached=reached,
                      score=last["score"] if reached else UNREACHED + math.log2(max(slow, FLOOR)))
-        self.shapes[k] = shape
-        print(f"    shape {'reached' if reached else 'did NOT reach'} --target {self.a.target:g}s"
-              f" at units={last['cfg']['units']}: score {shape['score']:+.2f}", flush=True)
+        with self.lock:
+            self.shapes[k] = shape
+        self.log(f"    shape {'reached' if reached else 'did NOT reach'} --target {self.a.target:g}s"
+                 f" at units={last['cfg']['units']}: score {shape['score']:+.2f}  {describe(dict(cfg, units=0))}")
         return shape
+
+    def eval_key(self, cfg):
+        """What evaluate() deduplicates on: the shape for balanced, else the config."""
+        return key(dict(cfg, units=None)) if self.a.objective == "balanced" else key(cfg)
+
+    def log(self, msg):
+        with self.lock:
+            print(msg, flush=True)
 
     def run_cfg(self, cfg, phase):
         k = key(cfg)
-        if k in self.cache:
-            return self.cache[k]
-        self.n += 1
+        with self.lock:
+            if k in self.cache:
+                return self.cache[k]
+            self.n += 1
+            n = self.n  # local: other workers move self.n on
         a = self.a
         try:
             prog = branchrun.gen(to_args(cfg))
         except subprocess.CalledProcessError as e:
-            self.cache[k] = None
-            print(f"[{self.n}] invalid: {describe(cfg)}: {e.stderr.strip()}", flush=True)
+            with self.lock:
+                self.cache[k] = None
+            self.log(f"[{n}] invalid: {describe(cfg)}: {e.stderr.strip()}")
             return None
         st = branchrun.static_stats(prog)
         if int(st["assigns"]) > a.max_assigns:
-            self.cache[k] = None
-            print(f"[{self.n}] skip ({st['assigns']} assigns > --max-assigns): {describe(cfg)}", flush=True)
+            with self.lock:
+                self.cache[k] = None
+            self.log(f"[{n}] skip ({st['assigns']} assigns > --max-assigns): {describe(cfg)}")
             return None
-        name = f"s{self.n:04d}_" + re.search(r"proc (\w+)\(", prog).group(1)
+        name = f"s{n:04d}_" + re.search(r"proc (\w+)\(", prog).group(1)
         path = os.path.join(a.out, f"{name}.heyvl")
         with open(path, "w") as f:
             f.write(prog)
@@ -236,27 +256,29 @@ class Search:
         sc = 0.0 if excluded else self.score(tp, tn)
         r = dict(cfg=cfg, path=path, score=sc, t_passify=tp, t_no_passify=tn,
                  v_passify=vp, v_no_passify=vn, excluded=excluded)
-        self.cache[k] = r
-        row = dict(n=self.n, phase=phase, score=f"{sc:.3f}", t_passify=f"{tp:.3f}",
+        row = dict(n=n, phase=phase, score=f"{sc:.3f}", t_passify=f"{tp:.3f}",
                    t_no_passify=f"{tn:.3f}", passify_timed_out=top, no_passify_timed_out=ton,
                    v_passify=vp, v_no_passify=vn, ssa_meas_max=ssa_meas, file=path,
                    genargs=describe(cfg), **{k2: cfg[k2] for k2 in SPACE},
                    **{s: st[s] for s in ["assigns", "branches", "paths", "max_writes_per_var",
                                          "max_ssa_per_var", "total_ssa", "joins"]})
-        if self.w is None:
-            self.w = csv.DictWriter(self.fh, fieldnames=list(row))
-            if self.fh.tell() == 0:
-                self.w.writeheader()
-        self.w.writerow(row)
-        self.fh.flush()
         mark = (" (both timed out)" if both_out else " (timed out, excluded)") if excluded else ""
-        print(f"[{self.n}] {phase:6} score={sc:+6.2f}  passify {tp:6.2f}s{'*' if top else ' '} "
-              f"no-passify {tn:6.2f}s{'*' if ton else ' '}{mark}  {describe(cfg)}", flush=True)
+        with self.lock:
+            self.cache[k] = r
+            if self.w is None:
+                self.w = csv.DictWriter(self.fh, fieldnames=list(row))
+                if self.fh.tell() == 0:
+                    self.w.writeheader()
+            self.w.writerow(row)
+            self.fh.flush()
+            print(f"[{n}] {phase:6} score={sc:+6.2f}  passify {tp:6.2f}s{'*' if top else ' '} "
+                  f"no-passify {tn:6.2f}s{'*' if ton else ' '}{mark}  {describe(cfg)}", flush=True)
         return r
 
     def best(self, k=1):
         pool = self.shapes if self.a.objective == "balanced" else self.cache
-        rs = [r for r in pool.values() if r and not r["excluded"]]
+        with self.lock:
+            rs = [r for r in pool.values() if r and not r["excluded"]]
         return sorted(rs, key=lambda r: -r["score"])[:k]
 
 
@@ -273,6 +295,9 @@ def main():
     ap.add_argument("--target", type=float, default=None,
                     help="balanced: stop growing a shape once a mode takes this long (default --timeout / 3)")
     ap.add_argument("--timeout", type=int, default=20, help="caesar --timeout per run (default 20)")
+    ap.add_argument("--jobs", "-j", type=int, default=1,
+                    help="configs evaluated in parallel (default 1). caesar uses one core per run, so "
+                         "up to the number of *physical* cores minus one; --confirm always runs serially")
     ap.add_argument("--max-assigns", type=int, default=3000,
                     help="skip programs with more assignments than this (default 3000)")
     ap.add_argument("--search-seed", type=int, default=0, help="RNG seed of the search itself")
@@ -299,23 +324,41 @@ def main():
     if a.target is None:
         a.target = a.timeout / 3
     s = Search(a, space)
+    ex = ThreadPoolExecutor(max_workers=a.jobs)
+
+    def run_batch(cfgs, phase):
+        """Evaluate configs on the worker pool (deduplicated, configs drawn in
+        this thread so the search seed alone decides what gets tried)."""
+        uniq = {}
+        for c in cfgs:
+            uniq.setdefault(s.eval_key(c), c)
+        return list(ex.map(lambda c: s.evaluate(c, phase), uniq.values()))
+
     try:
         if a.start:
-            s.evaluate(from_args(a.start), "start")
-        for _ in range(a.samples):
-            s.evaluate(s.random_cfg(), "random")
-        cur = s.best()
-        for _ in range(a.climb):
+            run_batch([from_args(a.start)], "start")
+        run_batch([s.random_cfg() for _ in range(a.samples)], "random")
+        cur, done = s.best(), 0
+        while done < a.climb:
+            n = min(a.jobs, a.climb - done)
+            done += n
             if not cur:
-                cur = s.best() or [s.evaluate(s.random_cfg(), "random")]
-                cur = [c for c in cur if c]
+                run_batch([s.random_cfg() for _ in range(n)], "random")
+                cur = s.best()
                 continue
-            r = s.evaluate(s.mutate(cur[0]["cfg"]), "climb")
-            # >= : sideways moves let the climb drift across plateaus
-            if r and not r["excluded"] and r["score"] >= cur[0]["score"]:
-                cur = [r]
+            # one round: --jobs mutations of the current best in parallel, move
+            # to the best of them; >= lets the climb drift across plateaus
+            rs = [r for r in run_batch([s.mutate(cur[0]["cfg"]) for _ in range(n)], "climb")
+                  if r and not r["excluded"]]
+            if rs:
+                b = max(rs, key=lambda r: r["score"])
+                if b["score"] >= cur[0]["score"]:
+                    cur = [b]
     except KeyboardInterrupt:
         print("\ninterrupted, results so far:", file=sys.stderr)
+        ex.shutdown(wait=False, cancel_futures=True)
+    else:
+        ex.shutdown()
 
     top = s.best(a.top)
     if a.objective == "balanced":
