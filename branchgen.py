@@ -15,7 +15,12 @@ The body is a sequence of `--units` units. Each unit is either
 So every execution path through the whole program has the same number of
 assignments (units * path-len), no matter how much branching there is. Only the
 *shape* changes: `--branch-ratio 0` is straight-line code, `--branch-ratio 1` is
-nothing but branches. Branch units are spread evenly between the sequential ones.
+nothing but branches. Which units are branches is fixed per --gen-seed, and
+raising --branch-ratio only turns further units into branches. Likewise every
+assignment draws the same random numbers whatever it becomes, so nudging
+--const-ratio / --copy-ratio flips single assignments. Small parameter changes
+therefore give small program changes (branchsearch.py --objective crossover
+interpolates between configs and relies on this).
 
 Assignments have the form  v_t = v_t + v_a + v_b + ... + 1  (`--dup` operands
 besides v_t). With dup >= 1 the plain wp substitution grows the terms
@@ -51,13 +56,6 @@ import sys
 #   ("flip", var, p)                            c = flip(p)
 
 
-def evenly_spaced(n_total, n_pick):
-    """Indices of n_pick positions spread evenly over range(n_total)."""
-    if n_pick <= 0:
-        return set()
-    return {int((i + 0.5) * n_total / n_pick) for i in range(n_pick)}
-
-
 class Gen:
     def __init__(self, a):
         self.a = a
@@ -76,11 +74,15 @@ class Gen:
         else:
             k = self.vars.index(t)
             ops = [others[(k + j) % len(others)] for j in range(a.dup)]
-        r = self.rng.random()
+        # Always draw the same random numbers, whatever kind the assignment
+        # becomes: then nudging --const-ratio / --copy-ratio flips single
+        # assignments and leaves the rest of the program as it is (needed for
+        # branchsearch.py --objective crossover, which interpolates parameters).
+        r, c, u = self.rng.random(), self.rng.randint(0, 3), self.rng.randrange(len(others))
         if r < a.const_ratio:  # v = c: shrinks the substituted term
-            return ("assign", t, [], False, self.rng.randint(0, 3))
+            return ("assign", t, [], False, c)
         if r < a.const_ratio + a.copy_ratio:  # v = u: plain copy
-            return ("assign", t, [others[self.rng.randrange(len(others))]], False, 0)
+            return ("assign", t, [others[u]], False, 0)
         return ("assign", t, ops, True, 1)
 
     def seq(self, n, allowed=None):
@@ -94,14 +96,16 @@ class Gen:
     def condition(self):
         """Pick the branch kind and produce (prefix_stmts, kind, cond)."""
         a = self.a
+        # same draws whatever the branch kind (see assignment())
         r = self.rng.random()
+        xy = self.rng.sample(self.vars, 2) if len(self.vars) > 1 else (self.vars[0],) * 2
         if r < a.flip_ratio:
             c = f"c{self.n_coins}"
             self.n_coins += 1
             return [("flip", c, a.flip_p)], "flip", c
         if r < a.flip_ratio + a.nondet_ratio:
             return [], "nondet", None
-        x, y = self.rng.sample(self.vars, 2) if len(self.vars) > 1 else (self.vars[0],) * 2
+        x, y = xy
         cond = ("even", x) if x == y else ("lt", x, y)
         return [], "if", cond
 
@@ -121,10 +125,18 @@ class Gen:
 
     def program(self):
         a = self.a
+        # Each unit has its own random stream and round-robin start, and the
+        # branch units are the ones with the smallest fixed per-unit priority.
+        # So raising --branch-ratio turns single further units into branches
+        # and every other unit stays exactly as it was (no reshuffling of the
+        # rest of the program; needed for branchsearch.py --objective crossover).
         n_branch = round(a.branch_ratio * a.units)
-        where = evenly_spaced(a.units, n_branch)
+        prio = [random.Random(f"{a.gen_seed}:prio:{u}").random() for u in range(a.units)]
+        where = set(sorted(range(a.units), key=lambda u: prio[u])[:n_branch])
         body = []
         for u in range(a.units):
+            self.rng = random.Random(f"{a.gen_seed}:unit:{u}")
+            self.rr = u * a.path_len
             if u in where:
                 body += self.branch(a.depth, a.path_len)
             else:
