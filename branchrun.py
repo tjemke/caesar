@@ -35,7 +35,8 @@ the run measured the unpassified program.
 With --hyperfine N, each file is additionally benchmarked with hyperfine
 (N runs, --warmup W) after the single probe run above. The probe still provides
 verdict and version counts (hyperfine discards caesar's output); modes whose
-probe timed out or was killed are not handed to hyperfine (decided per
+probe did not finish with a verdict (timeout, "error: Interrupted", killed,
+...) are not handed to hyperfine (decided per
 (mode, z3 seed)). All remaining (mode, z3 seed) pairs of one file go into a
 single hyperfine invocation, without --print-core, and
 the CSV gets hf_mean/hf_stddev/hf_median/hf_min/hf_max (wall clock, seconds)
@@ -73,6 +74,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 VERDICT = re.compile(
     r"Verified|Counter-example[^\n]*|[Tt]imeout|unknown|[Ee]rror.*"
 )
+def finished(verdict):
+    """True if caesar came to a verdict. Anything else (timeout, which caesar
+    reports either as "Timed out ..." or as "error: Interrupted", killed,
+    other errors) has no meaningful runtime."""
+    return bool(re.match(r"Verified|Counter-example", verdict))
+
+
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 VERSION = re.compile(r"\b(v\d+)_(\d+)\b")
 
@@ -310,7 +318,7 @@ def main():
                     ))
                 if a.hyperfine:
                     ok = [(r["mode"], r["_z3"]) for r in rows
-                          if not re.search(r"[Tt]ime|killed", r["verdict"])]
+                          if finished(r["verdict"])]
                     if ok:
                         hf, times = hyperfine(a.caesar, path, ok, a.timeout, a.hyperfine, a.warmup)
                         for r in rows:

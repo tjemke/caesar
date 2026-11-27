@@ -36,7 +36,9 @@ Score, depending on --objective:
               timeout / 3). Without the ladder nearly every random config is
               either trivial (startup noise, nothing to compare) or times out.
 For no-passify/passify, timed-out runs count as --timeout seconds (the score is
-then a lower bound) and times are floored at 0.05s against startup noise;
+then a lower bound) and times are floored at 0.05s against startup noise. A run
+counts as timed out whenever caesar gives no verdict (it reports timeouts as
+"Timed out ..." or as "error: Interrupted");
 configs where both modes time out are excluded. Configs with more than
 --max-assigns assignments in the program text are skipped without running
 caesar.
@@ -225,7 +227,7 @@ class Search:
         res = {}
         for mode in ["passify", "--no-passify"]:
             dt, verdict, (mmax, _, _) = branchrun.run(a.caesar, path, mode, None, a.timeout)
-            timed_out = bool(re.search(r"[Tt]ime|killed", verdict))
+            timed_out = not branchrun.finished(verdict)
             res[mode] = (a.timeout if timed_out else dt, verdict, timed_out, mmax)
         (tp, vp, top, ssa_meas), (tn, vn, ton, _) = res["passify"], res["--no-passify"]
         # "excluded": not comparable, never counts as best / as an improvement
@@ -323,7 +325,7 @@ def main():
         winner = "--no-passify" if a.objective == "no-passify" else "passify"
         print(f"\ntop {len(top)} configs where {winner} wins most (score = log2 speedup; * = lower bound, a run timed out):")
     for r in top:
-        star = "*" if re.search(r"[Tt]ime|killed", r["v_passify"] + r["v_no_passify"]) else " "
+        star = " " if branchrun.finished(r["v_passify"]) and branchrun.finished(r["v_no_passify"]) else "*"
         print(f"  {r['score']:+6.2f}{star} passify {r['t_passify']:6.2f}s  no-passify {r['t_no_passify']:6.2f}s"
               f"  {describe(r['cfg'])}")
     print(f"all evaluations: {s.csv_path}", flush=True)
